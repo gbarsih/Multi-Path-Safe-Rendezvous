@@ -1,34 +1,35 @@
 
 
 using Plots, LinearAlgebra
-using Dierckx
 
-x = [0., 1., 2., 3., 4.]
-y = [-1., 0., 7., 26., 63.]  # x.^3 - 1.
-spl = Spline1D(x, y)
-xv = -1:0.01:4
-plot(xv,spl.(xv))
-scatter!(x,y)
+function cubic_spline(t, x)
 
-u = [1., 2., 3., 4.]
-x = [1. 2. 3. 4.; 0. -2. 4. 4.]
-spl = ParametricSpline(u, x, k=1, s=size(x, 2))
+    #create matrix
+    N = length(x)
+    delta = abs(x[1] - x[2])
+    A = zeros(N, N)
+    B = zeros(N)
+    for i = 1:1:N
+        if i == 1
+            A[1, 1] = 1
+            B[1] = 0
+        elseif i == N
+            A[N, N] = 1
+            B[N] = 0
+        else
+            A[i, i-1] = 1 / 6
+            A[i, i] = 2 / 3
+            A[i, i+1] = 1 / 6
+            B[i] = (x[i+1] - 2 * x[i] + x[i-1]) / (delta^2)
+        end
+    end
 
-s = spl(1.0:0.01:4.0)
-plot(s[1,:],s[2,:])
-
-using Interpolations
-
-t = 0:.1:1
-x = sin.(2π*t)
-y = cos.(2π*t)
-A = hcat(x,y)
-
-itp = Interpolations.scale(interpolate(A, (BSpline(Cubic(Natural(OnGrid()))), NoInterp())), t, 1:2)
-
-tfine = 0:.01:1
-xs, ys = [itp(t,1) for t in tfine], [itp(t,2) for t in tfine]
-using Plots
-
-scatter(x, y, label="knots")
-plot!(xs, ys, label="spline")
+    #solve matrix
+    G = A \ (B)
+    j(yy) = min(floor((yy - minimum(x)) / (x[2] - x[1])) + 1, length(x) - 1)
+    f(xx) =
+        (G[j(xx)] / 6) * (((x[j(xx)+1] - xx)^3) / delta - delta * (x[j(xx)+1] - xx)) +
+        (G[j(xx)+1] / 6) * (((xx - x[j(xx)])^3) / delta - delta * (xx - x[j(xx)])) +
+        y[j(xx)] * (x[j(xx)+1] - xx) / delta +
+        y[j(xx)+1] * (xx - x[j(xx)]) / delta
+end
