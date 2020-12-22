@@ -4,9 +4,9 @@ using Plots, LinearAlgebra
 using JuMP, Ipopt
 using BenchmarkTools
 
-m = [3, 1]
+m = [2, 1]
 alpha = 1
-vmax = 15
+vmax = 25
 
 function path(θ, p = 1)
     if p == 1
@@ -86,23 +86,24 @@ function pathSample2Array(pathSample)
 end
 
 function simDeterministicUniform()
+    clearconsole()
     UASPos = [800, 950]
-    LPos = [700, 250]
-    Er = 10000
-    t = 0
-    hasRDV = false
+    LPos = [700, 650]
+    Er = 2000
+    ts = 0
+    PNRStat = false
     N = 100
     p = 1
     dt = 1
     for i = 1:100
-        TimeSamples = t:3:100
+        TimeSamples = ts:1:100
         PosSamples = DriverPosFunction(TimeSamples)
         rank = rankSampleMean(TimeSamples, UASPos, p)
         OptTimeSample = TimeSamples[argmin(rank)]
-        v, t = DeterministicUniformMPC(UASPos, LPos, OptTimeSample, Er, p)
-        p = plotPlan(UASPos, LPos, RDVPos, v, t)
-        display(p)
-        t = t + dt
+        v, t = DeterministicUniformMPC(UASPos, LPos, OptTimeSample, Er, ts, p)
+        pp = plotPlan(UASPos, LPos, RDVPos, v, t)
+        display(pp)
+        ts = ts + dt
         x, y, Er = uav_dynamics(
             UASPos[1],
             UASPos[2],
@@ -113,21 +114,32 @@ function simDeterministicUniform()
             vmax,
             PNRStat ? m[2] : m[1],
         )
-        #TODO: Iterate over t and switch modes when near PNR
+        UASPos = [x, y]
+        if t[1] <= 1.0 && ts > 10
+            break
+        end
     end
 end
 
-function DeterministicUniformMPC(UASPos, LPos, OptTimeSample, Er, PNRStat = false, p = 1)
+function DeterministicUniformMPC(
+    UASPos,
+    LPos,
+    OptTimeSample,
+    Er,
+    ts,
+    PNRStat = false,
+    p = 1,
+)
     RDVPos = path(DriverPosFunction(OptTimeSample), p)
     MPC = Model(optimizer_with_attributes(
         Ipopt.Optimizer,
         "print_level" => 0,
-        "max_iter" => 500,
+        "max_iter" => convert(Int64, 500),
     ))
     @variable(MPC, PNR[i = 1:2])
     @variable(MPC, -vmax <= v[i = 1:2, j = 1:4] <= vmax)
     @variable(MPC, t[j = 1:4] >= 0.1)
-
+    @variable(MPC, β >= 0)
     @constraint(MPC, PNR .== v[:, 1] .* t[1] .+ UASPos)
     @constraint(MPC, RDVPos .== v[:, 2] .* t[2] .+ PNR)
     @constraint(MPC, LPos .== v[:, 3] .* t[3] .+ RDVPos)
@@ -150,15 +162,26 @@ function DeterministicUniformMPC(UASPos, LPos, OptTimeSample, Er, PNRStat = fals
         m[1] * v[2, 1]^2 * t[1] +
         m[1] * v[2, 4]^2 * t[4] <= Er
     )
-
-    @objective(MPC, Min, sum(t[i] for i = 2:4) - 1 * t[1])
+    ta = OptTimeSample - ts #available time is time to RDV minus current time
+    @constraint(MPC, t[1] + t[2] - ta <= β)
+    @show ta
+    @objective(MPC, Min, sum(t[i] for i = 2:4) - 1 * t[1] + 1e10 * β)
 
     optimize!(MPC)
     v = value.(v)
     t = value.(t)
     PNR = value.(PNR)
-
-    @show t v PNR
+    Ed =
+        m[1] * v[1, 1]^2 * t[1] +
+        m[1] * v[1, 2]^2 * t[2] +
+        m[2] * v[1, 3]^2 * t[3] +
+        m[1] * v[2, 1]^2 * t[1] +
+        m[1] * v[2, 2]^2 * t[2] +
+        m[2] * v[2, 3]^2 * t[3]
+    if t[1] + t[2] > ta
+        tsum = t[1] + t[2]
+        @show tsum ta t v OptTimeSample ts Er Ed
+    end
     return v, t
 end
 
