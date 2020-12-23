@@ -89,7 +89,7 @@ function simDeterministicUniform()
     clearconsole()
     UASPos = [800, 950]
     LPos = [700, 650]
-    Er = 2000
+    Er = 6000
     ts = 0
     PNRStat = false
     N = 100
@@ -102,6 +102,7 @@ function simDeterministicUniform()
         OptTimeSample = TimeSamples[argmin(rank)]
         v, t = DeterministicUniformMPC(UASPos, LPos, OptTimeSample, Er, ts, p)
         pp = plotPlan(UASPos, LPos, RDVPos, v, t)
+        pp = scatter!(path(DriverPosFunction(ts)))
         display(pp)
         ts = ts + dt
         x, y, Er = uav_dynamics(
@@ -119,6 +120,7 @@ function simDeterministicUniform()
             break
         end
     end
+    # proceed with rendezvous
 end
 
 function DeterministicUniformMPC(
@@ -144,7 +146,6 @@ function DeterministicUniformMPC(
     @constraint(MPC, RDVPos .== v[:, 2] .* t[2] .+ PNR)
     @constraint(MPC, LPos .== v[:, 3] .* t[3] .+ RDVPos)
     @constraint(MPC, LPos .== v[:, 4] .* t[4] .+ PNR)
-    @constraint(MPC, sum(t[i] for i = 1:2) == OptTimeSample)
 
     @NLconstraint(
         MPC,
@@ -163,7 +164,7 @@ function DeterministicUniformMPC(
         m[1] * v[2, 4]^2 * t[4] <= Er
     )
     ta = OptTimeSample - ts #available time is time to RDV minus current time
-    @constraint(MPC, t[1] + t[2] - ta <= β)
+    @constraint(MPC, t[1] + t[2] <= ta)
     @show ta
     @objective(MPC, Min, sum(t[i] for i = 2:4) - 1 * t[1] + 1e10 * β)
 
@@ -178,9 +179,11 @@ function DeterministicUniformMPC(
         m[1] * v[2, 1]^2 * t[1] +
         m[1] * v[2, 2]^2 * t[2] +
         m[2] * v[2, 3]^2 * t[3]
-    if t[1] + t[2] > ta
+    if t[1] + t[2] > ta + 1
         tsum = t[1] + t[2]
         @show tsum ta t v OptTimeSample ts Er Ed
+    else
+        @show t v
     end
     return v, t
 end
@@ -194,10 +197,11 @@ function plotPlan(UASPos, LPos, RDVPos, v, t)
     LA = PNR + v[:, 4] * t[4]
     scatter!([UASPos[1]], [UASPos[2]])
     scatter!([LPos[1]], [LPos[2]])
-    scatter!([PNR[1]], [PNR[2]])
+    #scatter!([PNR[1]], [PNR[2]])
     scatter!([RDV[1]], [RDV[2]])
     scatter!([L[1]], [L[2]])
     scatter!([LA[1]], [LA[2]])
-    DPlan = [UASPos PNR RDV L]
+    #DPlan = [UASPos PNR RDV L]
+    DPlan = [UASPos RDV L]
     p = plot!(DPlan[1, :], DPlan[2, :])
 end
