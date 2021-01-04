@@ -1,6 +1,6 @@
 
 
-using Plots, LinearAlgebra, Random
+using Plots, LinearAlgebra, Random, Statistics
 using JuMP, Ipopt
 using BenchmarkTools
 rng = MersenneTwister(1234);
@@ -38,7 +38,7 @@ function plotpath(ns = ones(1))
             j = j + 1
         end
     end
-    plot(x[1, :], x[2, :], xlims = (0, 1300), ylims = (0, 1300))
+    plot(x[1, :], x[2, :], xlims = (0, 1300), ylims = (400, 1300))
 end
 
 function plotpath!(ns = ones(1))
@@ -50,7 +50,7 @@ function plotpath!(ns = ones(1))
             j = j + 1
         end
     end
-    plot!(x[1, :], x[2, :], xlims = (0, 1300), ylims = (0, 1300))
+    plot!(x[1, :], x[2, :], xlims = (0, 1300), ylims = (400, 1300))
 end
 
 function plotPosSamples(samples, p = 1)
@@ -62,7 +62,7 @@ end
 function plotPosSamples!(samples, p = 1)
     plotpath!(p)
     c = path.(samples, p)
-    scatter!(c,markersize=3.0)
+    scatter!(c, markersize = 3.0)
 end
 
 function plotTimeSamples(samples, p = 1)
@@ -86,35 +86,38 @@ function uav_dynamics(x, y, vx, vy, dt, rem_power = Inf, vmax = Inf, m = 1.0)
     return x, y, rem_power
 end
 
-function rankSampleMean(TimeSample, UASPos, p = [1])
-    np = size(p,1)
-    lt = size(TimeSample,1)
+function rankSampleMean(TimeSample, UASPos, n = false, p = [1])
+    np = size(p, 1)
+    lt = size(TimeSample, 1)
     if np == 1
-        x = hcat(
-            UASPos[1] * ones(lt),
-            UASPos[2] * ones(lt),
-        )
+        x = hcat(UASPos[1] * ones(lt), UASPos[2] * ones(lt))
         v = (pathSample2Array(path.(DriverPosFunction(TimeSample), p)) .- x) ./ TimeSample
         E = diag(v * v') .* TimeSample .+ alpha * TimeSample
         replace!(E, NaN => Inf)
-        return E
+        if n == false
+            return E
+        elseif n == 1
+            return argmin(E)
+        else
+            return partialsortperm(E, 1:min(n, lt))
+        end
     elseif np == 2
         #Here we rank two paths
         #Loss function is energy between paths plus energy to min
-        x = hcat(
-            UASPos[1] * ones(lt),
-            UASPos[2] * ones(lt),
-        ) #x contains a copy-vector of x-y coordinates of the UAS
-        E = zeros(lt,np)
+        x = hcat(UASPos[1] * ones(lt), UASPos[2] * ones(lt)) #x contains a copy-vector of x-y coordinates of the UAS
+        E = zeros(lt, np)
         for i = 1:np #for each path
-            v = (pathSample2Array(path.(DriverPosFunction(TimeSample), i)) .- x) ./ TimeSample
-            E[:,i] = diag(v * v') .* TimeSample .+ alpha * TimeSample
+            v =
+                (pathSample2Array(path.(DriverPosFunction(TimeSample), i)) .- x) ./
+                TimeSample
+            E[:, i] = diag(v * v') .* TimeSample .+ alpha * TimeSample
         end
         #E now contains energy to each path
-        #Calculate min
-        Em = min.(E[:,1],E[:,2])
-        #Calculate energy between paths
-        Eb = max.(E[:,1],E[:,2]) - Em
+        #Calculate minmax
+        Em = min.(E[:, 1], E[:, 2])
+        Ex = max.(E[:, 1], E[:, 2])
+    else
+        error("Invalid option!")
     end
 end
 
@@ -126,26 +129,46 @@ function simDeterministicUniform()
     clearconsole()
     UASPos = [800, 950]
     LPos = [700, 650]
-    Er = 6000
+    Er = 4000
     ts = 0
     PNRStat = false
     N = 100
     p = 1
     dt = 1
     PrevPNR = [0.0, 0.0]
-    anim = @animate for i = 1:100
-        TimeSamples = ts:sum(bitrand(rng, 5))+1:(100-ts/3)
+    μ = 60
+    Σ = 20
+    Ns = 10
+    β = 0.2
+    UASPosVec = zeros(N, 2)
+    anim = @animate for i = 1:N
+        UASPosVec[i, :] = UASPos
+        #TimeSamples = ts:sum(bitrand(rng, 5))+1:(100-ts/3)
+        TimeSamples = SampleTime(μ, Σ, N, ts)
         PosSamples = DriverPosFunction(TimeSamples)
-        rank = rankSampleMean(TimeSamples, UASPos, p)
-        OptTimeSample = TimeSamples[argmin(rank)]
-        v, t =
-            DeterministicUniformMPC(UASPos, LPos, OptTimeSample, Er, ts, PrevPNR, PNRStat)
-            pp = plot(legend=false)
+        elites = rankSampleMean(TimeSamples, UASPos, Ns, p)
+        elite = rankSampleMean(TimeSamples, UASPos, 1, p)
+        μ = sum(TimeSamples[elites]) / Ns
+        Σ = β * (sum((TimeSamples[elites] .- μ) .^ 2) ./ Ns + 1) + (1 - β) * Σ
+        OptTimeSample = TimeSamples[elite]
+        v, t = DeterministicUniformMPC(
+            UASPos,
+            LPos,
+            OptTimeSample,
+            Er,
+            ts,
+            PrevPNR,
+            PNRStat,
+        )
+        pp = plot(UASPosVec[1:i, 1], UASPosVec[1:i, 2], legend = false)
         pp = plotPlan!(UASPos, LPos, RDVPos, v, t, TimeSamples)
-        @show TimeSamples
-        pp = scatter!(path(DriverPosFunction(ts)),label="")
-        pp = plot!(tickfont = Plots.font("serif", pointsize=round(12.0)))
-        #display(pp)
+        pp = scatter!(
+            path(DriverPosFunction(ts)),
+            markersize = 6.0,
+            label = "",
+            markercolor = :green,
+        )
+        pp = plot!(tickfont = Plots.font("serif", pointsize = round(12.0)))
         ts = ts + dt
         PrevPNR = v[:, 1] .* t[1] .+ UASPos
         x, y, Er = uav_dynamics(
@@ -159,8 +182,8 @@ function simDeterministicUniform()
             PNRStat ? m[2] : m[1],
         )
         UASPos = [x, y]
-        @show t, i
-        if t[1] <= 1.0 && ts > 10
+        @show t, i, Σ
+        if t[1] <= 1.0 || DriverPosFunction(ts) > 500
             break
         end
     end
@@ -212,7 +235,7 @@ function DeterministicUniformMPC(
     @constraint(MPC, t[1] + t[2] <= ta)
     if PrevPNR[1] != 0 || PrevPNR[2] != 0
         PNRDist = @expression(MPC, PrevPNR - PNR)
-        @constraint(MPC, PNRDist' * PNRDist <= 5.0)
+        @constraint(MPC, PNRDist' * PNRDist <= 10.0)
     end
     @objective(MPC, Min, sum(t[i] for i = 2:4) - 1 * t[1])
 
@@ -273,21 +296,34 @@ function plotPlan!(UASPos, LPos, RDVPos, v, t)
 end
 
 function plotPlan!(UASPos, LPos, RDVPos, v, t, TimeSamples)
+    vo = 50
+    ho = 20
     plotpath!(1)
-    plotTimeSamples!(TimeSamples,1)
+    plotTimeSamples!(TimeSamples, 1)
     plotpath!(2)
-    plotTimeSamples!(TimeSamples,2)
+    plotTimeSamples!(TimeSamples, 2)
     PNR = UASPos + v[:, 1] * t[1]
     RDV = PNR + v[:, 2] * t[2]
     L = RDV + v[:, 3] * t[3]
     LA = PNR + v[:, 4] * t[4]
-    scatter!([UASPos[1]], [UASPos[2]], markersize=5.0)
-    #scatter!([LPos[1]], [LPos[2]])
-    #scatter!([PNR[1]], [PNR[2]])
-    #scatter!([RDV[1]], [RDV[2]])
-    #scatter!([L[1]], [L[2]])
-    #scatter!([LA[1]], [LA[2]])
+    scatter!([UASPos[1]], [UASPos[2]], markersize = 5.0)
     DPlan = [UASPos PNR RDV L]
+    annotate!(PNR[1], PNR[2] + vo, text("PNR", 12, :center))
+    annotate!(UASPos[1], UASPos[2] - vo, text("UAS", 12, :center))
+    annotate!(L[1], L[2] - vo, text("Depot", 12, :center))
+    annotate!(RDV[1] - ho, RDV[2], text("RDV", 12, :right))
     p = scatter!(DPlan[1, :], DPlan[2, :])
     p = plot!(DPlan[1, :], DPlan[2, :])
+end
+
+function SampleTime(μ, Σ, N = 1, t0 = 0.0, tf = 100.0)
+    TimeSamples = μ .+ randn(N) .* Σ
+    TimeSamples[TimeSamples.>=tf] .= tf
+    TimeSamples[TimeSamples.<=t0] .= t0
+    return TimeSamples
+end
+
+function TestSampling(μ, Σ, N)
+    TimeSamples = SampleTime(μ, Σ, N)
+    plotTimeSamples(TimeSamples, 1)
 end
