@@ -1,6 +1,6 @@
 
 
-using Plots, LinearAlgebra, Random, Statistics
+using Plots, LinearAlgebra, Random, Statistics, ColorSchemes
 using JuMP, Ipopt
 using BenchmarkTools
 rng = MersenneTwister(1234);
@@ -8,6 +8,10 @@ rng = MersenneTwister(1234);
 m = [2, 1]
 alpha = 1
 vmax = 25
+default(palette = :tol_bright)
+default(dpi = 100)
+vo = 50
+ho = 20
 
 function path(θ, p = 1)
     if p == 1
@@ -26,7 +30,7 @@ function path(θ, p = 1)
 end
 
 function DriverPosFunction(t)
-    return 10 .* t
+    return 8 .* t
 end
 
 function plotpath(ns = ones(1))
@@ -38,7 +42,7 @@ function plotpath(ns = ones(1))
             j = j + 1
         end
     end
-    plot(x[1, :], x[2, :], xlims = (0, 1300), ylims = (400, 1300))
+    plot(x[1, :], x[2, :], xlims = (0, 1300), ylims = (400, 1300), lw = 2)
 end
 
 function plotpath!(ns = ones(1))
@@ -50,7 +54,7 @@ function plotpath!(ns = ones(1))
             j = j + 1
         end
     end
-    plot!(x[1, :], x[2, :], xlims = (0, 1300), ylims = (400, 1300))
+    plot!(x[1, :], x[2, :], xlims = (0, 1300), ylims = (400, 1300), lw = 2)
 end
 
 function plotPosSamples(samples, p = 1)
@@ -86,8 +90,8 @@ function uav_dynamics(x, y, vx, vy, dt, rem_power = Inf, vmax = Inf, m = 1.0)
     return x, y, rem_power
 end
 
-function rankSampleMean(TimeSample, UASPos, n = false, p = [1])
-    np = size(p, 1)
+function rankSampleMean(TimeSample, UASPos, n=false, p=1)
+    np = 1
     lt = size(TimeSample, 1)
     if np == 1
         x = hcat(UASPos[1] * ones(lt), UASPos[2] * ones(lt))
@@ -121,6 +125,30 @@ function rankSampleMean(TimeSample, UASPos, n = false, p = [1])
     end
 end
 
+function rankMultiPath(TimeSamples, UASPos, n, p = [1,2], Er = Inf, sol = nothing)
+    np = 2
+    lt = size(TimeSamples, 1)
+    #this function returns the elites analyzes TimeSamples and returns the best
+    #time samples, and the ranking of paths for each elite. First, compute the
+    #energy elites. Regardless of where the landing spot it, these should still
+    #be top contenders.
+    x = hcat(UASPos[1] * ones(lt), UASPos[2] * ones(lt)) #x contains a copy-vector of x-y coordinates of the UAS
+    E = zeros(lt, np)
+    for i = 1:np #for each path
+        v =
+            (pathSample2Array(path.(DriverPosFunction(TimeSamples), i)) .- x) ./
+            TimeSamples
+        E[:, i] = m[1] .* diag(v * v') .* TimeSamples .+ alpha * TimeSamples
+    end
+    replace!(E, NaN => Inf)
+    Es = E[:,1].+E[:,2]
+    #E now contains delivery energy to each path
+    plot(E[:,1])
+    plot!(E[:,2],ylims=(0,2e3))
+    SumElites = partialsortperm(Es, 1:min(n, lt))
+    plot(Es[SumElites])
+end
+
 function pathSample2Array(pathSample)
     return hcat([y[1] for y in pathSample], [y[2] for y in pathSample])
 end
@@ -132,23 +160,25 @@ function simDeterministicUniform()
     Er = 4000
     ts = 0
     PNRStat = false
-    N = 100
+    N = 1000
     p = 1
     dt = 1
     PrevPNR = [0.0, 0.0]
-    μ = 60
-    Σ = 20
+    μ = 20
+    Σ = 60
     Ns = 10
     β = 0.2
+    γ = 1
     UASPosVec = zeros(N, 2)
     anim = @animate for i = 1:N
         UASPosVec[i, :] = UASPos
         #TimeSamples = ts:sum(bitrand(rng, 5))+1:(100-ts/3)
         TimeSamples = SampleTime(μ, Σ, N, ts)
         PosSamples = DriverPosFunction(TimeSamples)
-        elites = rankSampleMean(TimeSamples, UASPos, Ns, p)
-        elite = rankSampleMean(TimeSamples, UASPos, 1, p)
-        μ = sum(TimeSamples[elites]) / Ns
+        elites = rankSampleMean(TimeSamples, UASPos, Ns)
+        elite = rankSampleMean(TimeSamples, UASPos, 1)
+        μn = sum(TimeSamples[elites]) / Ns
+        μ = γ * μn + (1 - γ) * μ
         Σ = β * (sum((TimeSamples[elites] .- μ) .^ 2) ./ Ns + 1) + (1 - β) * Σ
         OptTimeSample = TimeSamples[elite]
         v, t = DeterministicUniformMPC(
@@ -161,7 +191,7 @@ function simDeterministicUniform()
             PNRStat,
         )
         pp = plot(UASPosVec[1:i, 1], UASPosVec[1:i, 2], legend = false)
-        pp = plotPlan!(UASPos, LPos, RDVPos, v, t, TimeSamples)
+        pp = plotPlan!(UASPos, LPos, v, t, TimeSamples)
         pp = scatter!(
             path(DriverPosFunction(ts)),
             markersize = 6.0,
@@ -235,7 +265,7 @@ function DeterministicUniformMPC(
     @constraint(MPC, t[1] + t[2] <= ta)
     if PrevPNR[1] != 0 || PrevPNR[2] != 0
         PNRDist = @expression(MPC, PrevPNR - PNR)
-        @constraint(MPC, PNRDist' * PNRDist <= 10.0)
+        @constraint(MPC, PNRDist' * PNRDist <= 1000.0)
     end
     @objective(MPC, Min, sum(t[i] for i = 2:4) - 1 * t[1])
 
@@ -295,9 +325,7 @@ function plotPlan!(UASPos, LPos, RDVPos, v, t)
     p = plot!(DPlan[1, :], DPlan[2, :])
 end
 
-function plotPlan!(UASPos, LPos, RDVPos, v, t, TimeSamples)
-    vo = 50
-    ho = 20
+function plotPlan!(UASPos, LPos, v, t, TimeSamples)
     plotpath!(1)
     plotTimeSamples!(TimeSamples, 1)
     plotpath!(2)
@@ -308,12 +336,14 @@ function plotPlan!(UASPos, LPos, RDVPos, v, t, TimeSamples)
     LA = PNR + v[:, 4] * t[4]
     scatter!([UASPos[1]], [UASPos[2]], markersize = 5.0)
     DPlan = [UASPos PNR RDV L]
+    APlan = [UASPos PNR L]
     annotate!(PNR[1], PNR[2] + vo, text("PNR", 12, :center))
     annotate!(UASPos[1], UASPos[2] - vo, text("UAS", 12, :center))
     annotate!(L[1], L[2] - vo, text("Depot", 12, :center))
     annotate!(RDV[1] - ho, RDV[2], text("RDV", 12, :right))
     p = scatter!(DPlan[1, :], DPlan[2, :])
-    p = plot!(DPlan[1, :], DPlan[2, :])
+    p = plot!(DPlan[1, :], DPlan[2, :], lw = 2)
+    p = plot!(APlan[1, :], APlan[2, :], linestyle = :dash)
 end
 
 function SampleTime(μ, Σ, N = 1, t0 = 0.0, tf = 100.0)
