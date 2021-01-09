@@ -1,18 +1,21 @@
 
 
-using Plots, LinearAlgebra, Random, Statistics, ColorSchemes
+using Plots, LinearAlgebra, Random, Statistics, ColorSchemes, LazySets
 using JuMP, Ipopt
 using BenchmarkTools
 rng = MersenneTwister(1234);
 
 m = [2, 1]
-alpha = 1
+alpha = 5
 vmax = 25
 default(palette = :tol_bright)
 default(dpi = 100)
 vo = 50
 ho = 20
-
+pv1 = [0 800; 600 800; 600 1000; 1000 1000]
+pv2 = [0 800; 1000 800; 1000 1000]
+Mp = 1000
+#=
 function path(θ, p = 1)
     if p == 1
         if θ <= 500
@@ -28,9 +31,59 @@ function path(θ, p = 1)
         return θ, 800
     end
 end
+=#
+
+function path(θ, p = 1, ArrOut = false)
+    if p == 1
+        nv = size(pv1, 1)
+        v = pv1
+    elseif p == 2
+        nv = size(pv2, 1)
+        v = pv2
+    else
+        error("invalid path choice at path function!")
+    end
+    ns = nv - 1
+    d = zeros(ns) #distances
+    #=
+    Max parametrization is Mp, the path is parametrized so that it linearly
+    evolves distance-wise, i.e. the distnce covered is uniform.
+    First, compute distances between all vertices and the linear fcns
+    =#
+    for i = 1:ns
+        d[i] = EuclideanDistance(v[i, :], v[i+1, :])
+    end
+    td = sum(d)
+    Dθ = d ./ td .* Mp
+    # now figure out which segment you're in
+    s = 1
+    thisSegBound = 0
+    for i = 1:ns
+        thisSegBound = sum(Dθ[1:i]) #how far this segment goes
+        if θ <= thisSegBound
+            s = i
+            break
+        end
+    end
+    if s != 1 #not first segment, adjust bounds and theta
+        prevSegBound = sum(Dθ[1:(s-1)])
+        θ -= prevSegBound
+        thisSegBound -= prevSegBound
+    end
+    x = v[s, 1] + (v[s+1, 1] - v[s, 1]) * θ / thisSegBound
+    y = v[s, 2] + (v[s+1, 2] - v[s, 2]) * θ / thisSegBound
+    if ArrOut
+        return [x, y]
+    end
+    return x, y
+end
+
+function EuclideanDistance(x1, x2)
+    sqrt((x1[1] - x2[1])^2 + (x1[2] - x2[2])^2)
+end
 
 function DriverPosFunction(t)
-    return 8 .* t
+    return 10 .* t
 end
 
 function plotpath(ns = ones(1))
@@ -90,13 +143,16 @@ function uav_dynamics(x, y, vx, vy, dt, rem_power = Inf, vmax = Inf, m = 1.0)
     return x, y, rem_power
 end
 
-function rankSampleMean(TimeSample, UASPos, n=false, p=1)
+function rankSampleMean(TimeSamples, UASPos, n = false, p = 1, plotOpt = false)
     np = 1
-    lt = size(TimeSample, 1)
+    lt = size(TimeSamples, 1)
     if np == 1
         x = hcat(UASPos[1] * ones(lt), UASPos[2] * ones(lt))
-        v = (pathSample2Array(path.(DriverPosFunction(TimeSample), p)) .- x) ./ TimeSample
-        E = diag(v * v') .* TimeSample .+ alpha * TimeSample
+        v = (pathSample2Array(path.(DriverPosFunction(TimeSamples), p)) .- x) ./ TimeSamples
+        E = diag(v * v') .* TimeSamples .+ alpha * TimeSamples
+        if plotOpt
+            plot(E, ylims = (0, 5000))
+        end
         replace!(E, NaN => Inf)
         if n == false
             return E
@@ -112,9 +168,9 @@ function rankSampleMean(TimeSample, UASPos, n=false, p=1)
         E = zeros(lt, np)
         for i = 1:np #for each path
             v =
-                (pathSample2Array(path.(DriverPosFunction(TimeSample), i)) .- x) ./
+                (pathSample2Array(path.(DriverPosFunction(TimeSamples), i)) .- x) ./
                 TimeSample
-            E[:, i] = diag(v * v') .* TimeSample .+ alpha * TimeSample
+            E[:, i] = diag(v * v') .* TimeSamples .+ alpha * TimeSamples
         end
         #E now contains energy to each path
         #Calculate minmax
@@ -123,9 +179,10 @@ function rankSampleMean(TimeSample, UASPos, n=false, p=1)
     else
         error("Invalid option!")
     end
+
 end
 
-function rankMultiPath(TimeSamples, UASPos, n, p = [1,2], Er = Inf, sol = nothing)
+function rankMultiPath(TimeSamples, UASPos, n, p = [1, 2], Er = Inf, sol = nothing)
     np = 2
     lt = size(TimeSamples, 1)
     #this function returns the elites analyzes TimeSamples and returns the best
@@ -135,16 +192,14 @@ function rankMultiPath(TimeSamples, UASPos, n, p = [1,2], Er = Inf, sol = nothin
     x = hcat(UASPos[1] * ones(lt), UASPos[2] * ones(lt)) #x contains a copy-vector of x-y coordinates of the UAS
     E = zeros(lt, np)
     for i = 1:np #for each path
-        v =
-            (pathSample2Array(path.(DriverPosFunction(TimeSamples), i)) .- x) ./
-            TimeSamples
+        v = (pathSample2Array(path.(DriverPosFunction(TimeSamples), i)) .- x) ./ TimeSamples
         E[:, i] = m[1] .* diag(v * v') .* TimeSamples .+ alpha * TimeSamples
     end
     replace!(E, NaN => Inf)
-    Es = E[:,1].+E[:,2]
+    Es = E[:, 1] .+ E[:, 2]
     #E now contains delivery energy to each path
-    plot(E[:,1])
-    plot!(E[:,2],ylims=(0,2e3))
+    plot(E[:, 1])
+    plot!(E[:, 2], ylims = (0, 2e3))
     SumElites = partialsortperm(Es, 1:min(n, lt))
     plot(Es[SumElites])
 end
@@ -155,31 +210,32 @@ end
 
 function simDeterministicUniform()
     clearconsole()
-    UASPos = [800, 950]
-    LPos = [700, 650]
-    Er = 4000
+    UASPos = [800, 450]
+    LPos = [400, 550]
+    Er = 6000
     ts = 0
     PNRStat = false
-    N = 1000
-    p = 1
+    N = 100
+    p = 2
     dt = 1
     PrevPNR = [0.0, 0.0]
-    μ = 20
-    Σ = 60
+    μ = 80
+    Σ = 40
     Ns = 10
-    β = 0.2
+    β = 0.1
     γ = 1
     UASPosVec = zeros(N, 2)
     anim = @animate for i = 1:N
         UASPosVec[i, :] = UASPos
-        #TimeSamples = ts:sum(bitrand(rng, 5))+1:(100-ts/3)
+        #TimeSamples = ts:120
         TimeSamples = SampleTime(μ, Σ, N, ts)
         PosSamples = DriverPosFunction(TimeSamples)
-        elites = rankSampleMean(TimeSamples, UASPos, Ns)
-        elite = rankSampleMean(TimeSamples, UASPos, 1)
+        elites = rankSampleMean(TimeSamples, UASPos, Ns, p)
+        elite = rankSampleMean(TimeSamples, UASPos, 1, p)
         μn = sum(TimeSamples[elites]) / Ns
         μ = γ * μn + (1 - γ) * μ
         Σ = β * (sum((TimeSamples[elites] .- μ) .^ 2) ./ Ns + 1) + (1 - β) * Σ
+        Σ = min(Σ, 100)
         OptTimeSample = TimeSamples[elite]
         v, t = DeterministicUniformMPC(
             UASPos,
@@ -189,8 +245,10 @@ function simDeterministicUniform()
             ts,
             PrevPNR,
             PNRStat,
+            p,
         )
         pp = plot(UASPosVec[1:i, 1], UASPosVec[1:i, 2], legend = false)
+        pp = drawConvexHull(TimeSamples)
         pp = plotPlan!(UASPos, LPos, v, t, TimeSamples)
         pp = scatter!(
             path(DriverPosFunction(ts)),
@@ -212,7 +270,7 @@ function simDeterministicUniform()
             PNRStat ? m[2] : m[1],
         )
         UASPos = [x, y]
-        @show t, i, Σ
+        @show t, i, Σ, μ
         if t[1] <= 1.0 || DriverPosFunction(ts) > 500
             break
         end
@@ -340,7 +398,7 @@ function plotPlan!(UASPos, LPos, v, t, TimeSamples)
     annotate!(PNR[1], PNR[2] + vo, text("PNR", 12, :center))
     annotate!(UASPos[1], UASPos[2] - vo, text("UAS", 12, :center))
     annotate!(L[1], L[2] - vo, text("Depot", 12, :center))
-    annotate!(RDV[1] - ho, RDV[2], text("RDV", 12, :right))
+    annotate!(RDV[1] - ho, RDV[2] + vo, text("RDV", 12, :right))
     p = scatter!(DPlan[1, :], DPlan[2, :])
     p = plot!(DPlan[1, :], DPlan[2, :], lw = 2)
     p = plot!(APlan[1, :], APlan[2, :], linestyle = :dash)
@@ -356,4 +414,19 @@ end
 function TestSampling(μ, Σ, N)
     TimeSamples = SampleTime(μ, Σ, N)
     plotTimeSamples(TimeSamples, 1)
+end
+
+function drawConvexHull(TimeSamples, p = [1, 2])
+    lt = length(TimeSamples)
+    lp = length(p)
+    θ = DriverPosFunction(TimeSamples)
+    v = zeros(lt*lp)
+    v = [zeros(2) for i in 1:lt*lp]
+    for j = 1:lp
+        idx1 = 1 + (j-1)*lt
+        idx2 = j*lt
+        v[idx1:idx2] = [path(i, j, true) for i in θ]
+    end
+    hull = convex_hull(v)
+    plot!(VPolygon(hull), alpha = 0.2)
 end
