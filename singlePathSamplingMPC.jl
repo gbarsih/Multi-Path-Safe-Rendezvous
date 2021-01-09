@@ -12,26 +12,11 @@ default(palette = :tol_bright)
 default(dpi = 100)
 vo = 50
 ho = 20
-pv1 = [0 800; 600 800; 600 1000; 1000 1000]
-pv2 = [0 800; 1000 800; 1000 1000]
+pv1 = [0 800; 600 800; 600 900; 1300 900]
+pv2 = [0 800; 1000 800; 1200 1200]
 Mp = 1000
-#=
-function path(θ, p = 1)
-    if p == 1
-        if θ <= 500
-            return θ, 800
-        elseif θ <= 900
-            θ = θ - 500
-            return 500, 800 + θ
-        else
-            θ = θ - 900
-            return -θ + 500, 800 + 400
-        end
-    elseif p == 2
-        return θ, 800
-    end
-end
-=#
+MaxDriverSpeed = 8
+tb = Mp / MaxDriverSpeed
 
 function path(θ, p = 1, ArrOut = false)
     if p == 1
@@ -45,17 +30,11 @@ function path(θ, p = 1, ArrOut = false)
     end
     ns = nv - 1
     d = zeros(ns) #distances
-    #=
-    Max parametrization is Mp, the path is parametrized so that it linearly
-    evolves distance-wise, i.e. the distnce covered is uniform.
-    First, compute distances between all vertices and the linear fcns
-    =#
     for i = 1:ns
         d[i] = EuclideanDistance(v[i, :], v[i+1, :])
     end
     td = sum(d)
     Dθ = d ./ td .* Mp
-    # now figure out which segment you're in
     s = 1
     thisSegBound = 0
     for i = 1:ns
@@ -72,6 +51,10 @@ function path(θ, p = 1, ArrOut = false)
     end
     x = v[s, 1] + (v[s+1, 1] - v[s, 1]) * θ / thisSegBound
     y = v[s, 2] + (v[s+1, 2] - v[s, 2]) * θ / thisSegBound
+    if θ > Mp
+        x = v[end, 1]
+        y = v[end, 2]
+    end
     if ArrOut
         return [x, y]
     end
@@ -83,7 +66,7 @@ function EuclideanDistance(x1, x2)
 end
 
 function DriverPosFunction(t)
-    return 10 .* t
+    return MaxDriverSpeed .* t
 end
 
 function plotpath(ns = ones(1))
@@ -139,7 +122,7 @@ function uav_dynamics(x, y, vx, vy, dt, rem_power = Inf, vmax = Inf, m = 1.0)
     vy < -vmax ? -vmax : vy
     x = x + vx * dt
     y = y + vy * dt
-    rem_power = rem_power - vx^2 * m * dt - vy^2 * m * dt - alpha * dt
+    rem_power = rem_power - vx^2 * m * dt - vy^2 * m * dt - m * alpha * dt
     return x, y, rem_power
 end
 
@@ -151,7 +134,7 @@ function rankSampleMean(TimeSamples, UASPos, n = false, p = 1, plotOpt = false)
         v = (pathSample2Array(path.(DriverPosFunction(TimeSamples), p)) .- x) ./ TimeSamples
         E = diag(v * v') .* TimeSamples .+ alpha * TimeSamples
         if plotOpt
-            plot(E, ylims = (0, 5000))
+            plot(E, ylims = (0, 18000))
         end
         replace!(E, NaN => Inf)
         if n == false
@@ -208,20 +191,19 @@ function pathSample2Array(pathSample)
     return hcat([y[1] for y in pathSample], [y[2] for y in pathSample])
 end
 
-function simDeterministicUniform()
+function simDeterministicUniform(Er = 8000)
     clearconsole()
     UASPos = [800, 450]
     LPos = [400, 550]
-    Er = 6000
     ts = 0
     PNRStat = false
     N = 100
-    p = 2
+    p = 1
     dt = 1
     PrevPNR = [0.0, 0.0]
     μ = 80
     Σ = 40
-    Ns = 10
+    Ns = 5
     β = 0.1
     γ = 1
     UASPosVec = zeros(N, 2)
@@ -248,17 +230,34 @@ function simDeterministicUniform()
             p,
         )
         pp = plot(UASPosVec[1:i, 1], UASPosVec[1:i, 2], legend = false)
-        pp = drawConvexHull(TimeSamples)
+        pp = drawConvexHull(TimeSamples, [1, 2], :green)
+        pp = drawConvexHull(TimeSamples[elites], [1, 2], :red)
         pp = plotPlan!(UASPos, LPos, v, t, TimeSamples)
         pp = scatter!(
-            path(DriverPosFunction(ts)),
+            path(DriverPosFunction(ts), p),
             markersize = 6.0,
             label = "",
             markercolor = :green,
         )
+        pp = scatter!(
+            path(DriverPosFunction(ts), p == 1 ? 2 : 1),
+            markersize = 6.0,
+            label = "",
+            markercolor = :red,
+        )
         pp = plot!(tickfont = Plots.font("serif", pointsize = round(12.0)))
         ts = ts + dt
         PrevPNR = v[:, 1] .* t[1] .+ UASPos
+        Ed =
+            m[1] * v[1, 1]^2 * t[1] +
+            m[1] * v[1, 2]^2 * t[2] +
+            m[2] * v[1, 3]^2 * t[3] +
+            m[1] * v[2, 1]^2 * t[1] +
+            m[1] * v[2, 2]^2 * t[2] +
+            m[2] * v[2, 3]^2 * t[3] +
+            m[1] * alpha * t[1] +
+            m[1] * alpha * t[2] +
+            m[2] * alpha * t[3]
         x, y, Er = uav_dynamics(
             UASPos[1],
             UASPos[2],
@@ -270,8 +269,14 @@ function simDeterministicUniform()
             PNRStat ? m[2] : m[1],
         )
         UASPos = [x, y]
-        @show t, i, Σ, μ
-        if t[1] <= 1.0 || DriverPosFunction(ts) > 500
+        @show t, i, Σ, μ, Er, Ed
+        if p == 2
+            pv = pv2
+        else
+            pv = pv1
+        end
+        if t[1] <= 1.0 ||
+           EuclideanDistance(path(DriverPosFunction(ts), p, true), pv[2, :]) <= 10
             break
         end
     end
@@ -310,14 +315,19 @@ function DeterministicUniformMPC(
         m[2] * v[1, 3]^2 * t[3] +
         m[1] * v[2, 1]^2 * t[1] +
         m[1] * v[2, 2]^2 * t[2] +
-        m[2] * v[2, 3]^2 * t[3] <= Er
+        m[2] * v[2, 3]^2 * t[3] +
+        m[1] * alpha * t[1] +
+        m[1] * alpha * t[2] +
+        m[2] * alpha * t[3] <= Er
     )
     @NLconstraint(
         MPC,
         m[1] * v[1, 1]^2 * t[1] +
         m[1] * v[1, 4]^2 * t[4] +
         m[1] * v[2, 1]^2 * t[1] +
-        m[1] * v[2, 4]^2 * t[4] <= Er
+        m[1] * v[2, 4]^2 * t[4] +
+        m[1] * alpha * t[1] +
+        m[1] * alpha * t[4] <= Er
     )
     ta = OptTimeSample - ts #available time is time to RDV minus current time
     @constraint(MPC, t[1] + t[2] <= ta)
@@ -330,20 +340,6 @@ function DeterministicUniformMPC(
     optimize!(MPC)
     v = value.(v)
     t = value.(t)
-    PNR = value.(PNR)
-    Ed =
-        m[1] * v[1, 1]^2 * t[1] +
-        m[1] * v[1, 2]^2 * t[2] +
-        m[2] * v[1, 3]^2 * t[3] +
-        m[1] * v[2, 1]^2 * t[1] +
-        m[1] * v[2, 2]^2 * t[2] +
-        m[2] * v[2, 3]^2 * t[3]
-    if t[1] + t[2] > ta + 1
-        tsum = t[1] + t[2]
-        #@show tsum ta t v OptTimeSample ts Er Ed
-    else
-        #@show t v
-    end
     return v, t
 end
 
@@ -398,13 +394,18 @@ function plotPlan!(UASPos, LPos, v, t, TimeSamples)
     annotate!(PNR[1], PNR[2] + vo, text("PNR", 12, :center))
     annotate!(UASPos[1], UASPos[2] - vo, text("UAS", 12, :center))
     annotate!(L[1], L[2] - vo, text("Depot", 12, :center))
-    annotate!(RDV[1] - ho, RDV[2] + vo, text("RDV", 12, :right))
+    annotate!(RDV[1], RDV[2] + vo, text("RDV", 12, :right))
+    p1 = pv1[2, :]
+    p2 = pv2[2, :]
+    annotate!(p1[1] - ho, p1[2] + vo, text("Path 1", 12, :right))
+    annotate!(p2[1] - ho, p2[2] - vo, text("Path 2", 12, :right))
     p = scatter!(DPlan[1, :], DPlan[2, :])
     p = plot!(DPlan[1, :], DPlan[2, :], lw = 2)
     p = plot!(APlan[1, :], APlan[2, :], linestyle = :dash)
 end
 
-function SampleTime(μ, Σ, N = 1, t0 = 0.0, tf = 100.0)
+function SampleTime(μ, Σ, N = 1, t0 = 0.0, tf = 75.0)
+    tf = tb
     TimeSamples = μ .+ randn(N) .* Σ
     TimeSamples[TimeSamples.>=tf] .= tf
     TimeSamples[TimeSamples.<=t0] .= t0
@@ -416,17 +417,48 @@ function TestSampling(μ, Σ, N)
     plotTimeSamples(TimeSamples, 1)
 end
 
-function drawConvexHull(TimeSamples, p = [1, 2])
+function drawConvexHull(TimeSamples, p = [1, 2], ucol = :blue)
     lt = length(TimeSamples)
     lp = length(p)
     θ = DriverPosFunction(TimeSamples)
-    v = zeros(lt*lp)
-    v = [zeros(2) for i in 1:lt*lp]
+    v = zeros(lt * lp)
+    v = [zeros(2) for i = 1:lt*lp]
     for j = 1:lp
-        idx1 = 1 + (j-1)*lt
-        idx2 = j*lt
+        idx1 = 1 + (j - 1) * lt
+        idx2 = j * lt
         v[idx1:idx2] = [path(i, j, true) for i in θ]
     end
     hull = convex_hull(v)
-    plot!(VPolygon(hull), alpha = 0.2)
+    plot!(VPolygon(hull), alpha = 0.2, color = ucol)
+end
+
+function maxRange(Er)
+    OCP = Model(optimizer_with_attributes(
+        Ipopt.Optimizer,
+        "print_level" => 0,
+        "max_iter" => convert(Int64, 500),
+    ))
+
+    @variable(OCP, r >= 0)
+    @variable(OCP, v[i = 1:2, j = 1:2] >= 0)
+    @variable(OCP, t[i = 1:2] >= 0)
+    @NLobjective(OCP, Max, sqrt((v[1, 1] * t[1])^2 + (v[2, 1] * t[1])^2))
+    @NLconstraint(
+        OCP,
+        sqrt((v[1, 1] * t[1])^2 + (v[2, 1] * t[1])^2) ==
+        sqrt((v[1, 2] * t[2])^2 + (v[2, 2] * t[2])^2)
+    ) # one-way ranges are the same
+    @NLconstraint(
+        OCP,
+        m[1] * v[1, 1]^2 * t[1] + #vx^2 going
+        m[2] * v[1, 2]^2 * t[2] +
+        m[1] * v[2, 1]^2 * t[1] + #vx^2 back
+        m[2] * v[2, 2]^2 * t[2] +
+        m[1] * alpha * t[1] + #hovering going
+        m[2] * alpha * t[2] <= Er #hovering back
+    )
+    optimize!(OCP)
+    v = value.(v)
+    t = value.(t)
+    r = sqrt((v[1, 1] * t[1])^2 + (v[2, 1] * t[1])^2)
 end
