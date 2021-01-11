@@ -239,12 +239,6 @@ function simDeterministicUniform(Er = 8000)
             label = "",
             markercolor = :green,
         )
-        pp = scatter!(
-            path(DriverPosFunction(ts), p == 1 ? 2 : 1),
-            markersize = 6.0,
-            label = "",
-            markercolor = :red,
-        )
         pp = plot!(tickfont = Plots.font("serif", pointsize = round(12.0)))
         ts = ts + dt
         PrevPNR = v[:, 1] .* t[1] .+ UASPos
@@ -432,7 +426,8 @@ function drawConvexHull(TimeSamples, p = [1, 2], ucol = :blue)
     plot!(VPolygon(hull), alpha = 0.2, color = ucol)
 end
 
-function maxRange(Er)
+function maxRange(Er, mass = [2,1])
+    m = mass
     OCP = Model(optimizer_with_attributes(
         Ipopt.Optimizer,
         "print_level" => 0,
@@ -461,4 +456,5 @@ function maxRange(Er)
     v = value.(v)
     t = value.(t)
     r = sqrt((v[1, 1] * t[1])^2 + (v[2, 1] * t[1])^2)
+    @show v, t, r
 end
