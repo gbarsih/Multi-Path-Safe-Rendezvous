@@ -1,33 +1,14 @@
 using GaussianProcesses
 using Random
-
 using Optim
 
-Random.seed!(20140430)
-# Training data
-n = 10;                          #number of training points
-x = 2π * rand(n);              #predictors
-y = sin.(x) + 0.05 * randn(n);   #regressors
-
-#Select mean and covariance function
-mZero = MeanZero()
-kern = SE(0.0, 0.0)
-
-logObsNoise = -1.0
-gp = GP(x, y, mZero, kern, logObsNoise)
-
-μ, σ² = predict_y(gp, range(0, stop = 2π, length = 100));
-
-plot(gp; xlabel = "x", ylabel = "y", title = "Gaussian process", legend = false, fmt = :png)
-
-GaussianProcesses.optimize!(gp)
-
-plot(gp)
-
+NoiseVar = 0.05
+NoiseStd = sqrt(NoiseVar)
+NoiseLog = log10(NoiseVar)
 # setup driver learning problem.
 
 function VelocityPrior(t) #historical model
-    return 10.0 .+ sin(t ./ 10)
+    return 10.0 .+ 5 .* sin(t ./ 10)
 end
 
 function VariancePrior(t) #historical model
@@ -71,10 +52,28 @@ end
 # Now test with learning
 
 function LearnDeviationFunction(D)
-    #This function takes in the dataset D and outputs a GP.
+    #=This function takes in the dataset D and outputs a GP.
     #D[1,:] has historical velocities
     #D[2,:] has measured velocities
+    Want to learn measured velocities as a function of velocities
+    =#
 
-    D[2, :] .= D[2, :] .- D[1, :]
+    x = D[:, 1]   #predictors
+    y = D[:, 2]   #regressors
+    #Select mean and covariance function
+    mZero = MeanZero()
+    mLin = MeanLin([0.0, 1.0])
+    mConst = MeanConst(1.0)
+    kern = SE(0.0, 0.0)
+    logObsNoise = LogNoise
+    gp = GPE(x, y, mZero, kern, logObsNoise)
+end
 
+function TestLearning(n=100)
+    t = range(0, stop = 100, length = n)
+    D = zeros(n,2)
+    D[:,1] = VelocityPrior.(t)
+    D[:,2] = Deviation.(VelocityPrior.(t)) + NoiseStd.*randn(n)
+    gp = LearnDeviationFunction(D)
+    plot(gp)
 end
