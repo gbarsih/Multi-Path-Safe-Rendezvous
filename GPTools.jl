@@ -1,11 +1,19 @@
+using Plots, LinearAlgebra, Random, Statistics, ColorSchemes, LazySets
 using GaussianProcesses
 using Random
 using Optim
+using QuadGK
 
 NoiseVar = 0.05
 NoiseStd = sqrt(NoiseVar)
 NoiseLog = log10(NoiseVar)
 # setup driver learning problem.
+#default(size = [1200, 800])
+default(palette = :tol_bright)
+default(dpi = 600)
+rng = MersenneTwister(1234)
+
+rectangle(w, h, x, y) = Shape(x .+ [0,w,w,0], y .+ [0,0,h,h])
 
 function VelocityPrior(t) #historical model
     return 10.0 .+ 4.0 .* sin(t ./ 10)
@@ -35,8 +43,19 @@ function DriverVelocity(t, gp = nothing)
     return v + devfcn[1][1]
 end
 
+function DriverUncertainty(t, gp)
+    v = VelocityPrior(t)
+    μ, Σ = predict_y(gp, [v])
+    return Σ[1]
+end
+
 function DriverPosition(ti, tf, gp = nothing, tol = 1e-1)
     integral, err = quadgk(x -> DriverVelocity(x, gp), ti, tf, rtol = tol)
+    return integral
+end
+
+function DriverUncertainty(ti, tf, gp, tol = 1e-1)
+    integral, err = quadgk(x -> DriverUncertainty(x, gp), ti, tf, rtol = tol)
     return integral
 end
 
@@ -66,7 +85,7 @@ function LearnDeviationFunction(D, useConst = false)
     else
         mFcn = MeanConst(mean(D[:, 2]))
     end
-    kern = SE(0.0, NoiseLog)
+    kern = SE(0.0, 0.0)
     logObsNoise = NoiseLog
     gp = GPE(x, y, mFcn, kern, logObsNoise)
 end
@@ -100,4 +119,55 @@ function AnimateLearning(n = 100)
         )
     end
     gif(anim, "Learning_Anim.gif", fps = 30)
+end
+
+function PlotPosPrediction(n = 100, t0 = 20.0, tf = 100.0)
+    t = range(0, stop = t0, length = n) #just learn the first t0s
+    D = zeros(n, 2)
+    D[:, 1] = VelocityPrior.(t)
+    D[:, 2] = Deviation.(VelocityPrior.(t)) + NoiseStd .* randn(n)
+    gp = LearnDeviationFunction(D, true)
+    #plot(gp, ylims = (-2, 10), xlims = (0, 16))
+    t = range(0.0, stop = tf, length = 100)
+    p = zeros(length(t))
+    s = zeros(length(t))
+    v = zeros(length(t))
+    for i = 1:length(t)
+        p[i] = DriverPosition(t[1], t[i], gp)
+        s[i] = DriverUncertainty(t[1], t[i], gp, 1e-3)
+        v[i] = DriverVelocity(t[i])
+    end
+    p1 = plot(
+        t,
+        v,
+        title = "True Velocity",
+        ylabel = "Driver Speed [θ/s]",
+        xlabel = "Time [s]",
+        label = "Velocity",
+        xlims = (0,100),
+        ylims = (5,16)
+    )
+    p1 = plot!(rectangle(1000,1000,-100,minimum(D[:,1])), opacity=.2, label = "Learned Region")
+    p2 = plot(
+        t,
+        s,
+        title = "Position Uncertainty",
+        ylabel = "Uncertainty [θ]",
+        xlabel = "Time [s]",
+        legend = false,
+        ylims = (0,35)
+    )
+    p3 = plot(
+        gp,
+        ylims = (-2, 6),
+        xlims = (5, 16),
+        title = "Gaussian Process",
+        xlabel = "Prototypical Speed [θ/s]",
+        ylabel = "Dev. Fcn [θ/s]",
+        legend = false,
+    )
+    l = @layout [a b; c{0.4h}]
+    p = plot(p1, p2, p3, layout = l)
+    display(p)
+    savefig("learning_ex.png")
 end

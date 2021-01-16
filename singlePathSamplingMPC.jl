@@ -4,12 +4,12 @@ using Plots, LinearAlgebra, Random, Statistics, ColorSchemes, LazySets
 using JuMP, Ipopt
 using BenchmarkTools
 rng = MersenneTwister(1234);
+default(palette = :tol_bright)
+default(dpi = 600)
 
 m = [2, 1]
 alpha = 5
 vmax = 25
-default(palette = :tol_bright)
-default(dpi = 100)
 vo = 50
 ho = 20
 pv1 = [0 800; 600 800; 600 900; 1300 900]
