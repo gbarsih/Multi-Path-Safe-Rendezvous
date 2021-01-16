@@ -8,7 +8,7 @@ NoiseLog = log10(NoiseVar)
 # setup driver learning problem.
 
 function VelocityPrior(t) #historical model
-    return 10.0 .+ 5 .* sin(t ./ 10)
+    return 10.0 .+ 4.0 .* sin(t ./ 10)
 end
 
 function VariancePrior(t) #historical model
@@ -16,7 +16,7 @@ function VariancePrior(t) #historical model
 end
 
 function Deviation(v) #deviation function
-    return 2.0
+    return v >= 10 ? 2.0 : -1.0
 end
 
 function LearnedDeviation(gp, v) #learned deviation function
@@ -51,7 +51,7 @@ end
 
 # Now test with learning
 
-function LearnDeviationFunction(D)
+function LearnDeviationFunction(D, useConst = false)
     #=This function takes in the dataset D and outputs a GP.
     #D[1,:] has historical velocities
     #D[2,:] has measured velocities
@@ -61,19 +61,43 @@ function LearnDeviationFunction(D)
     x = D[:, 1]   #predictors
     y = D[:, 2]   #regressors
     #Select mean and covariance function
-    mZero = MeanZero()
-    mLin = MeanLin([0.0, 1.0])
-    mConst = MeanConst(1.0)
-    kern = SE(0.0, 0.0)
-    logObsNoise = LogNoise
-    gp = GPE(x, y, mZero, kern, logObsNoise)
+    if !useConst
+        mFcn = MeanZero()
+    else
+        mFcn = MeanConst(mean(D[:, 2]))
+    end
+    kern = SE(0.0, NoiseLog)
+    logObsNoise = NoiseLog
+    gp = GPE(x, y, mFcn, kern, logObsNoise)
 end
 
-function TestLearning(n=100)
+function TestLearning(n = 100)
     t = range(0, stop = 100, length = n)
-    D = zeros(n,2)
-    D[:,1] = VelocityPrior.(t)
-    D[:,2] = Deviation.(VelocityPrior.(t)) + NoiseStd.*randn(n)
-    gp = LearnDeviationFunction(D)
-    plot(gp)
+    D = zeros(n, 2)
+    D[:, 1] = VelocityPrior.(t)
+    D[:, 2] = Deviation.(VelocityPrior.(t)) + NoiseStd .* randn(n)
+    gp = LearnDeviationFunction(D, true)
+    plot(gp, ylims = (-2, 10), xlims = (0, 16))
+end
+
+function AnimateLearning(n = 100)
+    t = range(0, stop = 100, length = n)
+    D = zeros(n, 2)
+    D[:, 1] = VelocityPrior.(t)
+    D[:, 2] = Deviation.(VelocityPrior.(t)) + NoiseStd .* randn(n)
+    anim = @animate for i = 1:n
+        @show i
+        k = i <= 5 ? 5 : i
+        gp = LearnDeviationFunction(D[1:k, :], true)
+        plot(
+            gp,
+            ylims = (-2, 6),
+            xlims = (0, 16),
+            legend = false,
+            xlabel = "Prototypical Speed [θ/s]",
+            ylabel = "Deviation Function [θ/s]",
+            markeralpha = 0.3,
+        )
+    end
+    gif(anim, "Learning_Anim.gif", fps = 30)
 end

@@ -275,7 +275,7 @@ function simDeterministicUniform(Er = 8000)
         end
     end
     # proceed with rendezvous
-    gif(anim, "anim_fps15.gif", fps = 15)
+    gif(anim, "RDV_Anim.gif", fps = 15)
 end
 
 function DeterministicUniformMPC(
@@ -331,7 +331,7 @@ function DeterministicUniformMPC(
     end
     @objective(MPC, Min, sum(t[i] for i = 2:4) - 1 * t[1])
 
-    optimize!(MPC)
+    JuMP.optimize!(MPC)
     v = value.(v)
     t = value.(t)
     return v, t
