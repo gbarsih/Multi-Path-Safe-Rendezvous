@@ -1,4 +1,5 @@
 using Plots, LinearAlgebra, Random, Statistics, ColorSchemes, LazySets
+using BenchmarkTools
 using GaussianProcesses
 using Random
 using Optim
@@ -13,7 +14,7 @@ default(palette = :tol_bright)
 default(dpi = 600)
 rng = MersenneTwister(1234)
 
-rectangle(w, h, x, y) = Shape(x .+ [0,w,w,0], y .+ [0,0,h,h])
+rectangle(w, h, x, y) = Shape(x .+ [0, w, w, 0], y .+ [0, 0, h, h])
 
 function VelocityPrior(t) #historical model
     return 10.0 .+ 4.0 .* sin(t ./ 10)
@@ -70,7 +71,7 @@ end
 
 # Now test with learning
 
-function LearnDeviationFunction(D, useConst = false)
+function LearnDeviationFunction(D, useConst = false, method = "full")
     #=This function takes in the dataset D and outputs a GP.
     #D[1,:] has historical velocities
     #D[2,:] has measured velocities
@@ -87,7 +88,27 @@ function LearnDeviationFunction(D, useConst = false)
     end
     kern = SE(0.0, 0.0)
     logObsNoise = NoiseLog
-    gp = GPE(x, y, mFcn, kern, logObsNoise)
+    if method == "full"
+        return GPE(x, y, mFcn, kern, logObsNoise)
+    elseif method == "SOR"
+        Xu = Matrix(
+            quantile(
+                x,
+                [0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.98],
+            )',
+        )
+        X = Matrix(x')
+        return GaussianProcesses.SoR(X, Xu, y, mFcn, kern, logObsNoise)
+    elseif method == "DTC"
+        Xu = Matrix(
+            quantile(
+                x,
+                [0.02, 0.2, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.8, 0.98],
+            )',
+        )
+        X = Matrix(x')
+        return GaussianProcesses.DTC(X, Xu, y, mFcn, kern, logObsNoise)
+    end
 end
 
 function TestLearning(n = 100)
@@ -95,8 +116,18 @@ function TestLearning(n = 100)
     D = zeros(n, 2)
     D[:, 1] = VelocityPrior.(t)
     D[:, 2] = Deviation.(VelocityPrior.(t)) + NoiseStd .* randn(n)
-    gp = LearnDeviationFunction(D, true)
+    gp = LearnDeviationFunction(D, true, "full")
     plot(gp, ylims = (-2, 10), xlims = (0, 16))
+end
+
+function BenchmarkLearning(n = 100)
+    t = range(0, stop = 100, length = n)
+    D = zeros(n, 2)
+    D[:, 1] = VelocityPrior.(t)
+    D[:, 2] = Deviation.(VelocityPrior.(t)) + NoiseStd .* randn(n)
+    @benchmark LearnDeviationFunction($D, $true, "full")
+    @benchmark LearnDeviationFunction($D, $true, "SOR")
+    @benchmark LearnDeviationFunction($D, $true, "DTC")
 end
 
 function AnimateLearning(n = 100)
@@ -126,7 +157,7 @@ function PlotPosPrediction(n = 100, t0 = 20.0, tf = 100.0)
     D = zeros(n, 2)
     D[:, 1] = VelocityPrior.(t)
     D[:, 2] = Deviation.(VelocityPrior.(t)) + NoiseStd .* randn(n)
-    gp = LearnDeviationFunction(D, true)
+    gp = LearnDeviationFunction(D, true, "full")
     #plot(gp, ylims = (-2, 10), xlims = (0, 16))
     t = range(0.0, stop = tf, length = 100)
     p = zeros(length(t))
@@ -144,18 +175,22 @@ function PlotPosPrediction(n = 100, t0 = 20.0, tf = 100.0)
         ylabel = "Driver Speed [θ/s]",
         xlabel = "Time [s]",
         label = "Velocity",
-        xlims = (0,100),
-        ylims = (5,16)
+        xlims = (0, 100),
+        ylims = (5, 16),
     )
-    p1 = plot!(rectangle(1000,1000,-100,minimum(D[:,1])), opacity=.2, label = "Learned Region")
+    p1 = plot!(
+        rectangle(1000, 1000, -100, minimum(D[:, 1])),
+        opacity = 0.2,
+        label = "Learned Region",
+    )
     p2 = plot(
         t,
         s,
         title = "Position Uncertainty",
-        ylabel = "Uncertainty [θ]",
+        ylabel = "Variance [θ]",
         xlabel = "Time [s]",
         legend = false,
-        ylims = (0,35)
+        ylims = (0, 35),
     )
     p3 = plot(
         gp,
