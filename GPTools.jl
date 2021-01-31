@@ -4,14 +4,24 @@ using GaussianProcesses
 using Random
 using Optim
 using QuadGK
+using Measures
 
 NoiseVar = 0.05
 NoiseStd = sqrt(NoiseVar)
 NoiseLog = log10(NoiseVar)
 # setup driver learning problem.
-#default(size = [1200, 800])
+default(size = 2 .* [800, 600])
 default(palette = :tol_bright)
-default(dpi = 600)
+default(dpi = 300)
+default(lw = 3)
+default(margin = 10mm)
+FontSize = 18
+default(xtickfontsize = FontSize)
+default(ytickfontsize = FontSize)
+default(xguidefontsize = FontSize)
+default(yguidefontsize = FontSize)
+default(legendfontsize = FontSize)
+default(titlefontsize = FontSize)
 rng = MersenneTwister(1234)
 
 rectangle(w, h, x, y) = Shape(x .+ [0, w, w, 0], y .+ [0, 0, h, h])
@@ -116,7 +126,7 @@ function TestLearning(n = 100)
     D = zeros(n, 2)
     D[:, 1] = VelocityPrior.(t)
     D[:, 2] = Deviation.(VelocityPrior.(t)) + NoiseStd .* randn(n)
-    gp = LearnDeviationFunction(D, true, "full")
+    gp = LearnDeviationFunction(D, true, "DTC")
     plot(gp, ylims = (-2, 10), xlims = (0, 16))
 end
 
@@ -138,7 +148,7 @@ function AnimateLearning(n = 100)
     anim = @animate for i = 1:n
         @show i
         k = i <= 5 ? 5 : i
-        gp = LearnDeviationFunction(D[1:k, :], true)
+        gp = LearnDeviationFunction(D[1:k, :], true, "full")
         plot(
             gp,
             ylims = (-2, 6),
@@ -163,6 +173,7 @@ function PlotPosPrediction(n = 100, t0 = 20.0, tf = 100.0)
     p = zeros(length(t))
     s = zeros(length(t))
     v = zeros(length(t))
+    vp = VelocityPrior.(t)
     for i = 1:length(t)
         p[i] = DriverPosition(t[1], t[i], gp)
         s[i] = DriverUncertainty(t[1], t[i], gp, 1e-3)
@@ -174,12 +185,16 @@ function PlotPosPrediction(n = 100, t0 = 20.0, tf = 100.0)
         title = "True Velocity",
         ylabel = "Driver Speed [θ/s]",
         xlabel = "Time [s]",
-        label = "Velocity",
+        label = "Driver Velocity",
         xlims = (0, 100),
         ylims = (5, 16),
     )
+    p1 = plot!(t, vp, label = "Velocity Prior")
+    minv = minimum(D[:, 1])
+    maxv = maximum(D[:, 1])
+    @show minv maxv
     p1 = plot!(
-        rectangle(1000, 1000, -100, minimum(D[:, 1])),
+        rectangle(1000, maxv - minv, -100, minv),
         opacity = 0.2,
         label = "Learned Region",
     )

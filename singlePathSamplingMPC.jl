@@ -1,14 +1,28 @@
 
 
-using Plots, LinearAlgebra, Random, Statistics, ColorSchemes, LazySets
+using Plots, LinearAlgebra, Random, Statistics, Printf
+using ColorSchemes, LazySets, LaTeXStrings
 using JuMP, Ipopt
 using BenchmarkTools
+
+include("GPTools.jl")
 rng = MersenneTwister(1234);
+default(size = 2 .* [800, 800])
 default(palette = :tol_bright)
-default(dpi = 600)
+default(dpi = 300)
+default(lw = 3)
+default(margin = 10mm)
+FontSize = 18
+default(xtickfontsize = FontSize)
+default(ytickfontsize = FontSize)
+default(xguidefontsize = FontSize)
+default(yguidefontsize = FontSize)
+default(legendfontsize = FontSize)
+default(titlefontsize = FontSize)
+rng = MersenneTwister(1234)
 
 m = [2, 1]
-alpha = 5
+alpha = 50
 vmax = 25
 vo = 50
 ho = 20
@@ -426,12 +440,12 @@ function drawConvexHull(TimeSamples, p = [1, 2], ucol = :blue)
     plot!(VPolygon(hull), alpha = 0.2, color = ucol)
 end
 
-function maxRange(Er, mass = [2,1])
+function maxRange(Er, mass = [3, 1], tmax = 1000)
     m = mass
     OCP = Model(optimizer_with_attributes(
         Ipopt.Optimizer,
         "print_level" => 0,
-        "max_iter" => convert(Int64, 500),
+        "max_iter" => convert(Int64, 50000),
     ))
 
     @variable(OCP, r >= 0)
@@ -452,9 +466,99 @@ function maxRange(Er, mass = [2,1])
         m[1] * alpha * t[1] + #hovering going
         m[2] * alpha * t[2] <= Er #hovering back
     )
-    optimize!(OCP)
+    @constraint(OCP, sum(t[i] for i = 1:2) <= tmax)
+    JuMP.optimize!(OCP)
     v = value.(v)
     t = value.(t)
     r = sqrt((v[1, 1] * t[1])^2 + (v[2, 1] * t[1])^2)
-    @show v, t, r
+    @show r, v, t
+    return r
+end
+
+function minTime(Er, mass = [3, 1], xmax=500, ymax=500)
+    m = mass
+    OCP = Model(optimizer_with_attributes(
+        Ipopt.Optimizer,
+        "print_level" => 0,
+        "max_iter" => convert(Int64, 500),
+    ))
+
+    @variable(OCP, r >= 0)
+    @variable(OCP, v[i = 1:2, j = 1:2] >= 0)
+    @variable(OCP, t[i = 1:2] >= 0)
+    @NLobjective(OCP, Min, sum(t[i] for i = 1:2))
+    rmax = sqrt(xmax^2+ymax^2)
+    @NLconstraint(
+        OCP,
+        sqrt((v[1, 1] * t[1])^2 + (v[2, 1] * t[1])^2) ==
+        sqrt((v[1, 2] * t[2])^2 + (v[2, 2] * t[2])^2)
+    ) # one-way ranges are the same
+    @NLconstraint(
+        OCP,
+        sqrt((v[1, 1] * t[1])^2 + (v[2, 1] * t[1])^2) == rmax
+    )
+    @NLconstraint(
+        OCP,
+        m[1] * v[1, 1]^2 * t[1] + #vx^2 going
+        m[2] * v[1, 2]^2 * t[2] +
+        m[1] * v[2, 1]^2 * t[1] + #vx^2 back
+        m[2] * v[2, 2]^2 * t[2] +
+        m[1] * alpha * t[1] + #hovering going
+        m[2] * alpha * t[2] <= Er #hovering back
+    )
+    JuMP.optimize!(OCP)
+    v = value.(v)
+    t = value.(t)
+    r = sqrt((v[1, 1] * t[1])^2 + (v[2, 1] * t[1])^2)
+    @show r, v, t
+    tmax = sum(t)
+    return tmax
+end
+
+function CircleShape(h, k, r)
+    θ = range(0, 2 * π, length = 500)
+    h .+ r * sin.(θ), k .+ r * cos.(θ)
+end
+
+function PlotRangeContours(
+    Er = 50000,
+    DepotCoord = [0.0, 0.0],
+    t0 = 10,
+    tint = 10,
+    n = 20,
+    mass = [2, 1],
+    keep = false,
+)
+    t = range(t0, step = tint, length = n)
+    r = zeros(n)
+    if !keep
+        p = plot()
+    end
+    p = plot!()
+    for i = 1:n
+        r[i] = maxRange(Er, mass, t[i])
+        p = plot!(
+            CircleShape(DepotCoord[1], DepotCoord[2], r[i]),
+            seriestype = [:shape],
+            c = :green,
+            linecolor = :black,
+            linealpha = 0.05,
+            #linewidth = 0.0,
+            legend = :false,
+            fillalpha = min(1 / n, 0.1),
+            aspecratio = 1,
+        )
+        s1 = @sprintf("\$T_{\\operator{max}}=%0.1fs\$", t[i])
+        s1 = @sprintf("%ds", t[i])
+        θ = -(i^(1.3) / (5 * n) * 2 * π + π)
+        annotate!(
+            DepotCoord[1] + r[i] * cos(θ),
+            DepotCoord[2] + r[i] * sin(θ),
+            Plots.text(s1, FontSize, rotation = rad2deg(θ-π/2)),
+        )
+        xlabel!(L"x")
+        ylabel!(L"y")
+    end
+    display(p)
+    return p
 end
