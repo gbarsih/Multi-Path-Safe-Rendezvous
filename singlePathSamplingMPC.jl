@@ -2,10 +2,9 @@
 
 using Plots, LinearAlgebra, Random, Statistics, Printf
 using ColorSchemes, LazySets, LaTeXStrings
-using JuMP, Ipopt
+using JuMP, Ipopt, CUDA
 using BenchmarkTools
 
-include("GPTools.jl")
 rng = MersenneTwister(1234);
 default(size = 2 .* [800, 800])
 default(palette = :tol_bright)
@@ -179,6 +178,48 @@ function rankSampleMean(TimeSamples, UASPos, n = false, p = 1, plotOpt = false)
 
 end
 
+function rankSampleMeanCUDA(TimeSamples, UASPos, n = false, p = 1, plotOpt = false)
+    np = 1
+    lt = size(TimeSamples, 1)
+    iv = CuArray(ones(lt))
+    if np == 1
+        x = hcat(UASPos[1] * iv, UASPos[2] * iv)
+        auxt = CuArray(TimeSamples)
+        aux = CuArray(pathSample2Array(path.(DriverPosFunction(auxt), p)))
+        v = (aux .- x) ./ CuArray(TimeSamples)
+        E = diag(v * v') .* auxt .+ alpha * auxt
+        if plotOpt
+            plot(E, ylims = (0, 18000))
+        end
+        replace!(E, NaN => Inf)
+        if n == false
+            return E
+        elseif n == 1
+            return argmin(E)
+        else
+            return partialsortperm(E, 1:min(n, lt))
+        end
+    elseif np == 2
+        #Here we rank two paths
+        #Loss function is energy between paths plus energy to min
+        x = hcat(UASPos[1] * ones(lt), UASPos[2] * ones(lt)) #x contains a copy-vector of x-y coordinates of the UAS
+        E = zeros(lt, np)
+        for i = 1:np #for each path
+            v =
+                (pathSample2Array(path.(DriverPosFunction(TimeSamples), i)) .- x) ./
+                TimeSample
+            E[:, i] = diag(v * v') .* TimeSamples .+ alpha * TimeSamples
+        end
+        #E now contains energy to each path
+        #Calculate minmax
+        Em = min.(E[:, 1], E[:, 2])
+        Ex = max.(E[:, 1], E[:, 2])
+    else
+        error("Invalid option!")
+    end
+
+end
+
 function rankMultiPath(TimeSamples, UASPos, n, p = [1, 2], Er = Inf, sol = nothing)
     np = 2
     lt = size(TimeSamples, 1)
@@ -206,7 +247,7 @@ function pathSample2Array(pathSample)
 end
 
 function simDeterministicUniform(Er = 8000)
-    clearconsole()
+    #clearconsole()
     UASPos = [800, 450]
     LPos = [400, 550]
     ts = 0
@@ -289,7 +330,7 @@ function simDeterministicUniform(Er = 8000)
         end
     end
     # proceed with rendezvous
-    gif(anim, "RDV_Anim.gif", fps = 15)
+    gif(anim, "~/gabriel-files/Multi-Path-Safe-Rendezvous/RDV_Anim.gif", fps = 15)
 end
 
 function DeterministicUniformMPC(

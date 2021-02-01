@@ -1,5 +1,5 @@
 using Plots, LinearAlgebra, Random, Statistics, ColorSchemes, LazySets
-using BenchmarkTools
+using BenchmarkTools, Dates
 using GaussianProcesses
 using Random
 using Optim
@@ -104,7 +104,20 @@ function LearnDeviationFunction(D, useConst = false, method = "full")
         Xu = Matrix(
             quantile(
                 x,
-                [0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.98],
+                [
+                    0.2,
+                    0.25,
+                    0.3,
+                    0.35,
+                    0.4,
+                    0.45,
+                    0.5,
+                    0.55,
+                    0.6,
+                    0.65,
+                    0.7,
+                    0.98,
+                ],
             )',
         )
         X = Matrix(x')
@@ -113,7 +126,20 @@ function LearnDeviationFunction(D, useConst = false, method = "full")
         Xu = Matrix(
             quantile(
                 x,
-                [0.02, 0.2, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.8, 0.98],
+                [
+                    0.02,
+                    0.2,
+                    0.3,
+                    0.35,
+                    0.4,
+                    0.45,
+                    0.5,
+                    0.55,
+                    0.6,
+                    0.65,
+                    0.8,
+                    0.98,
+                ],
             )',
         )
         X = Matrix(x')
@@ -174,7 +200,7 @@ function PlotPosPrediction(n = 100, t0 = 20.0, tf = 100.0)
     s = zeros(length(t))
     v = zeros(length(t))
     vp = VelocityPrior.(t)
-    for i = 1:length(t)
+    Threads.@threads for i = 1:length(t)
         p[i] = DriverPosition(t[1], t[i], gp)
         s[i] = DriverUncertainty(t[1], t[i], gp, 1e-3)
         v[i] = DriverVelocity(t[i])
@@ -219,5 +245,5 @@ function PlotPosPrediction(n = 100, t0 = 20.0, tf = 100.0)
     l = @layout [a b; c{0.4h}]
     p = plot(p1, p2, p3, layout = l)
     display(p)
-    savefig("learning_ex.png")
+    #savefig("~/gabriel-files/Multi-Path-Safe-Rendezvous/learning_ex.png")
 end
