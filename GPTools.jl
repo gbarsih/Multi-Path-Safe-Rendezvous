@@ -1,5 +1,5 @@
 using Plots, LinearAlgebra, Random, Statistics, ColorSchemes, LazySets
-using BenchmarkTools, Dates
+using BenchmarkTools, Dates, Measures
 using GaussianProcesses
 using Random
 using Optim
@@ -245,5 +245,5 @@ function PlotPosPrediction(n = 100, t0 = 20.0, tf = 100.0)
     l = @layout [a b; c{0.4h}]
     p = plot(p1, p2, p3, layout = l)
     display(p)
-    #savefig("~/gabriel-files/Multi-Path-Safe-Rendezvous/learning_ex.png")
+    savefig("learning_ex.png")
 end
