@@ -1,18 +1,27 @@
 
 
 using Plots, LinearAlgebra, Random, Statistics, ColorSchemes, LazySets
-using JuMP, Ipopt
+using JuMP, Ipopt, Measures, Printf, LaTeXStrings
 using BenchmarkTools
 rng = MersenneTwister(1234);
 default(palette = :tol_bright)
 default(dpi = 200)
+default(size = (600, 600))
+default(lw = 3)
+default(margin = 10mm)
+FontSize = 18
+default(xtickfontsize = FontSize)
+default(ytickfontsize = FontSize)
+default(xguidefontsize = FontSize)
+default(yguidefontsize = FontSize)
+default(legendfontsize = FontSize)
+default(titlefontsize = FontSize)
 
 m = [2, 1]
 alpha = 5
 vmax = 25
 vo = 50
 ho = 20
-default(size=(600,600))
 pv1 = [0 800; 600 800; 600 900; 1300 900]
 pv2 = [0 800; 1000 800; 1200 1200]
 Mp = 1000
@@ -70,52 +79,6 @@ function DriverPosFunction(t)
     return MaxDriverSpeed .* t
 end
 
-function plotpath(ns = ones(1))
-    x = zeros(2, 1001)
-    for i in ns
-        j = 1
-        for θ in range(0, size(x, 2) - 1, step = 1)
-            x[:, j] .= path(θ, i)
-            j = j + 1
-        end
-    end
-    plot(x[1, :], x[2, :], xlims = (0, 1300), ylims = (400, 1300), lw = 2)
-end
-
-function plotpath!(ns = ones(1))
-    x = zeros(2, 1001)
-    for i in ns
-        j = 1
-        for θ in range(0, size(x, 2) - 1, step = 1)
-            x[:, j] .= path(θ, i)
-            j = j + 1
-        end
-    end
-    plot!(x[1, :], x[2, :], xlims = (0, 1300), ylims = (400, 1300), lw = 2)
-end
-
-function plotPosSamples(samples, p = 1)
-    plotpath(p)
-    c = path.(samples, p)
-    scatter!(c)
-end
-
-function plotPosSamples!(samples, p = 1)
-    plotpath!(p)
-    c = path.(samples, p)
-    scatter!(c, markersize = 3.0)
-end
-
-function plotTimeSamples(samples, p = 1)
-    samples = DriverPosFunction(samples)
-    plotPosSamples(samples, p)
-end
-
-function plotTimeSamples!(samples, p = 1)
-    samples = DriverPosFunction(samples)
-    plotPosSamples!(samples, p)
-end
-
 function uav_dynamics(x, y, vx, vy, dt, rem_power = Inf, vmax = Inf, m = 1.0)
     vx > vmax ? vmax : vx
     vy > vmax ? vmax : vy
@@ -132,7 +95,9 @@ function rankSampleMean(TimeSamples, UASPos, n = false, p = 1, plotOpt = false)
     lt = size(TimeSamples, 1)
     if np == 1
         x = hcat(UASPos[1] * ones(lt), UASPos[2] * ones(lt))
-        v = (pathSample2Array(path.(DriverPosFunction(TimeSamples), p)) .- x) ./ TimeSamples
+        v =
+            (pathSample2Array(path.(DriverPosFunction(TimeSamples), p)) .- x) ./
+            TimeSamples
         E = diag(v * v') .* TimeSamples .+ alpha * TimeSamples
         if plotOpt
             plot(E, ylims = (0, 18000))
@@ -152,8 +117,11 @@ function rankSampleMean(TimeSamples, UASPos, n = false, p = 1, plotOpt = false)
         E = zeros(lt, np)
         for i = 1:np #for each path
             v =
-                (pathSample2Array(path.(DriverPosFunction(TimeSamples), i)) .- x) ./
-                TimeSample
+                (
+                    pathSample2Array(
+                        path.(DriverPosFunction(TimeSamples), i),
+                    ) .- x
+                ) ./ TimeSample
             E[:, i] = diag(v * v') .* TimeSamples .+ alpha * TimeSamples
         end
         #E now contains energy to each path
@@ -166,30 +134,70 @@ function rankSampleMean(TimeSamples, UASPos, n = false, p = 1, plotOpt = false)
 
 end
 
-function rankMultiPath(TimeSamples, UASPos, n, p = [1, 2], Er = Inf, sol = nothing)
-    np = 2
+function rankMultiPath(
+    TimeSamples,
+    UASPos,
+    n,
+    p = [1, 2],
+    method = "BestFirst",
+    Er = Inf,
+    sol = nothing,
+)
+    np = size(TimeSamples, 2)
+    if np != length(p)
+        error("Invalid #map v #smpl")
+    end
     lt = size(TimeSamples, 1)
-    #this function returns the elites analyzes TimeSamples and returns the best
-    #time samples, and the ranking of paths for each elite. First, compute the
-    #energy elites. Regardless of where the landing spot it, these should still
-    #be top contenders.
     x = hcat(UASPos[1] * ones(lt), UASPos[2] * ones(lt)) #x contains a copy-vector of x-y coordinates of the UAS
     E = zeros(lt, np)
-    for i = 1:np #for each path
-        v = (pathSample2Array(path.(DriverPosFunction(TimeSamples), i)) .- x) ./ TimeSamples
-        E[:, i] = m[1] .* diag(v * v') .* TimeSamples .+ alpha * TimeSamples
+    Threads.@threads for i = 1:np #for each path
+        v =
+            (
+                pathSample2Array(
+                    path.(DriverPosFunction(TimeSamples[:, i]), i),
+                ) .- x
+            ) ./ TimeSamples
+        E[:, i] =
+            m[1] .* diag(v * v') .* TimeSamples[:, i] .+
+            alpha * TimeSamples[:, i]
     end
+    # E now contains energies for each sample group. Next choose a method
     replace!(E, NaN => Inf)
+    if n == 1
+        return [argmin(E[:, 1]) argmin(E[:, 2])]
+    end
+    if method == "BestFirst"
+        elites = zeros(Int16, n, np)
+        Threads.@threads for i = 1:np
+            elites[:, i] = partialsortperm(E[:, i], 1:min(n, lt))
+        end
+        return elites
+    else
+        error("Invalid Method Argument")
+    end
     Es = E[:, 1] .+ E[:, 2]
-    #E now contains delivery energy to each path
-    plot(E[:, 1])
-    plot!(E[:, 2], ylims = (0, 2e3))
     SumElites = partialsortperm(Es, 1:min(n, lt))
-    plot(Es[SumElites])
 end
 
 function pathSample2Array(pathSample)
     return hcat([y[1] for y in pathSample], [y[2] for y in pathSample])
+end
+
+function SampleTime(μ, Σ, N = 1, t0 = 0.0, tf = 75.0)
+    if size(μ, 1) != size(Σ, 1) || size(μ, 2) != 1 || size(Σ, 2) != 1
+        error("Wrong distribution dimensions!")
+    end
+    ndist = size(μ, 1)
+    tf = tb
+    TimeSamples = μ' .+ randn(N, ndist) .* Σ'
+    TimeSamples[TimeSamples.>=tf] .= tf
+    TimeSamples[TimeSamples.<=t0] .= t0
+    return TimeSamples
+end
+
+function TestSampling(μ, Σ, N)
+    TimeSamples = SampleTime(μ, Σ, N)
+    plotTimeSamples(TimeSamples, 1)
 end
 
 function simDeterministicUniform(Er = 8000)
@@ -199,25 +207,27 @@ function simDeterministicUniform(Er = 8000)
     ts = 0
     PNRStat = false
     N = 100
-    p = 1
+    p = 2
     dt = 1
     PrevPNR = [0.0, 0.0]
     μ = 80
     Σ = 40
     Ns = 5
-    β = 0.2
+    β = 0.1
     γ = 1.0
     UASPosVec = zeros(N, 2)
     anim = @animate for i = 1:N
         UASPosVec[i, :] = UASPos
         #TimeSamples = ts:120
         TimeSamples = SampleTime(μ, Σ, N, ts)
+        TimeSamples = TimeSamples[:]
         PosSamples = DriverPosFunction(TimeSamples)
         elites = rankSampleMean(TimeSamples, UASPos, Ns, p)
         elite = rankSampleMean(TimeSamples, UASPos, 1, p)
         μn = sum(TimeSamples[elites]) / Ns
         μ = γ * μn + (1 - γ) * μ
-        Σ = β * (sum((TimeSamples[elites] .- μ) .^ 2) ./ Ns + 1) + (1 - β) * Σ
+        Σ =
+            β * (sum((TimeSamples[elites] .- μ) .^ 2) ./ Ns + 1) + (1 - β) * Σ
         Σ = min(Σ, 100)
         OptTimeSample = TimeSamples[elite]
         v, t = DeterministicUniformMPC(
@@ -230,12 +240,109 @@ function simDeterministicUniform(Er = 8000)
             PNRStat,
             p,
         )
-        pp = plot(UASPosVec[1:i, 1], UASPosVec[1:i, 2], legend = false)
+        pp = plot()
+        pp = plot!(UASPosVec[1:i, 1], UASPosVec[1:i, 2], legend = false)
         pp = drawConvexHull(TimeSamples, [1, 2], :green)
         pp = drawConvexHull(TimeSamples[elites], [1, 2], :red)
         pp = plotPlan!(UASPos, LPos, v, t, TimeSamples)
         pp = scatter!(
             path(DriverPosFunction(ts), p),
+            markersize = 6.0,
+            label = "",
+            markercolor = :green,
+        )
+        pp = plot!(tickfont = Plots.font("serif", pointsize = round(12.0)))
+        ts = ts + dt
+        PrevPNR = v[:, 1] .* t[1] .+ UASPos
+        Ed =
+            m[1] * v[1, 1]^2 * t[1] +
+            m[1] * v[1, 2]^2 * t[2] +
+            m[2] * v[1, 3]^2 * t[3] +
+            m[1] * v[2, 1]^2 * t[1] +
+            m[1] * v[2, 2]^2 * t[2] +
+            m[2] * v[2, 3]^2 * t[3] +
+            m[1] * alpha * t[1] +
+            m[1] * alpha * t[2] +
+            m[2] * alpha * t[3]
+        x, y, Er = uav_dynamics(
+            UASPos[1],
+            UASPos[2],
+            v[1, 1],
+            v[2, 1],
+            dt,
+            Er,
+            vmax,
+            PNRStat ? m[2] : m[1],
+        )
+        UASPos = [x, y]
+        @show t, i, Σ, μ, Er, Ed
+        if p == 2
+            pv = pv2
+        else
+            pv = pv1
+        end
+        if t[1] <= 1.0 ||
+           EuclideanDistance(path(DriverPosFunction(ts), p, true), pv[2, :]) <= 10
+            break
+        end
+    end
+    # proceed with rendezvous
+    gif(anim, "RDV_Anim.gif", fps = 15)
+end
+
+function simIndependentDistributions(Er = 8000)
+    clearconsole()
+    UASPos = [800, 450]
+    LPos = [400, 550]
+    ts = 0
+    PNRStat = false
+    N = 100
+    p = [1, 2]
+    ptgt = 2
+    dt = 1
+    PrevPNR = [0.0, 0.0]
+    μ = 80 * ones(2)
+    Σ = 40 * ones(2)
+    Ns = 5
+    β = 0.1
+    γ = 1.0
+    UASPosVec = zeros(N, 2)
+    OptTimeSample = zeros(length(p))
+    anim = @animate for i = 1:N
+        UASPosVec[i, :] = UASPos
+        #TimeSamples = ts:120
+        TimeSamples = SampleTime(μ, Σ, N, ts)
+        PosSamples = DriverPosFunction(TimeSamples)
+        elites = rankMultiPath(TimeSamples, UASPos, Ns, p)
+        elite = rankMultiPath(TimeSamples, UASPos, 1, p)
+        for j = 1:length(p)
+            μn = sum(TimeSamples[elites[:,j], j]) / Ns
+            μ[j] = γ * μn + (1 - γ) * μ[j]
+            Σ[j] =
+                β * (sum((TimeSamples[elites[:,j], j] .- μ[j]) .^ 2) ./ Ns + 1) +
+                (1 - β) * Σ[j]
+            Σ[j] = min(Σ[j], 100)
+            OptTimeSample[j] = TimeSamples[elite[j], j]
+        end
+        ptgt = argmin(OptTimeSample)
+        v, t = DeterministicUniformMPC(
+            UASPos,
+            LPos,
+            OptTimeSample[2],
+            Er,
+            ts,
+            PrevPNR,
+            PNRStat,
+            2,
+        )
+        #TODO: Fix plotting of convex hull
+        pp = plot()
+        pp = plot!(UASPosVec[1:i, 1], UASPosVec[1:i, 2], legend = false)
+        pp = drawConvexHull(TimeSamples, [1, 2], :green)
+        pp = drawConvexHull(TimeSamples[elites], [1, 2], :red)
+        pp = plotPlan!(UASPos, LPos, v, t, TimeSamples)
+        pp = scatter!(
+            path(DriverPosFunction(ts), ptgt),
             markersize = 6.0,
             label = "",
             markercolor = :green,
@@ -290,11 +397,13 @@ function DeterministicUniformMPC(
     p = 1,
 )
     RDVPos = path(DriverPosFunction(OptTimeSample), p)
-    MPC = Model(optimizer_with_attributes(
-        Ipopt.Optimizer,
-        "print_level" => 0,
-        "max_iter" => convert(Int64, 500),
-    ))
+    MPC = Model(
+        optimizer_with_attributes(
+            Ipopt.Optimizer,
+            "print_level" => 0,
+            "max_iter" => convert(Int64, 500),
+        ),
+    )
     @variable(MPC, PNR[i = 1:2])
     @variable(MPC, -vmax <= v[i = 1:2, j = 1:4] <= vmax)
     @variable(MPC, t[j = 1:4] >= 0.1)
@@ -399,19 +508,6 @@ function plotPlan!(UASPos, LPos, v, t, TimeSamples)
     p = plot!(APlan[1, :], APlan[2, :], linestyle = :dash)
 end
 
-function SampleTime(μ, Σ, N = 1, t0 = 0.0, tf = 75.0)
-    tf = tb
-    TimeSamples = μ .+ randn(N) .* Σ
-    TimeSamples[TimeSamples.>=tf] .= tf
-    TimeSamples[TimeSamples.<=t0] .= t0
-    return TimeSamples
-end
-
-function TestSampling(μ, Σ, N)
-    TimeSamples = SampleTime(μ, Σ, N)
-    plotTimeSamples(TimeSamples, 1)
-end
-
 function drawConvexHull(TimeSamples, p = [1, 2], ucol = :blue)
     lt = length(TimeSamples)
     lp = length(p)
@@ -427,13 +523,15 @@ function drawConvexHull(TimeSamples, p = [1, 2], ucol = :blue)
     plot!(VPolygon(hull), alpha = 0.2, color = ucol)
 end
 
-function maxRange(Er, mass = [3, 1], tmax = 1000)
+function maxRange(Er, mass = [2, 1], tmax = 1000)
     m = mass
-    OCP = Model(optimizer_with_attributes(
-        Ipopt.Optimizer,
-        "print_level" => 0,
-        "max_iter" => convert(Int64, 50000),
-    ))
+    OCP = Model(
+        optimizer_with_attributes(
+            Ipopt.Optimizer,
+            "print_level" => 0,
+            "max_iter" => convert(Int64, 50000),
+        ),
+    )
 
     @variable(OCP, r >= 0)
     @variable(OCP, v[i = 1:2, j = 1:2] >= 0)
@@ -458,32 +556,31 @@ function maxRange(Er, mass = [3, 1], tmax = 1000)
     v = value.(v)
     t = value.(t)
     r = sqrt((v[1, 1] * t[1])^2 + (v[2, 1] * t[1])^2)
-    @show r, v, t
+    #@show r, v, t
     return r
 end
 
-function minTime(Er, mass = [3, 1], xmax=500, ymax=500)
+function minTime(Er, mass = [2, 1], xmax = 500, ymax = 500)
     m = mass
-    OCP = Model(optimizer_with_attributes(
-        Ipopt.Optimizer,
-        "print_level" => 0,
-        "max_iter" => convert(Int64, 500),
-    ))
+    OCP = Model(
+        optimizer_with_attributes(
+            Ipopt.Optimizer,
+            "print_level" => 0,
+            "max_iter" => convert(Int64, 500),
+        ),
+    )
 
     @variable(OCP, r >= 0)
     @variable(OCP, v[i = 1:2, j = 1:2] >= 0)
     @variable(OCP, t[i = 1:2] >= 0)
     @NLobjective(OCP, Min, sum(t[i] for i = 1:2))
-    rmax = sqrt(xmax^2+ymax^2)
+    rmax = sqrt(xmax^2 + ymax^2)
     @NLconstraint(
         OCP,
         sqrt((v[1, 1] * t[1])^2 + (v[2, 1] * t[1])^2) ==
         sqrt((v[1, 2] * t[2])^2 + (v[2, 2] * t[2])^2)
     ) # one-way ranges are the same
-    @NLconstraint(
-        OCP,
-        sqrt((v[1, 1] * t[1])^2 + (v[2, 1] * t[1])^2) == rmax
-    )
+    @NLconstraint(OCP, sqrt((v[1, 1] * t[1])^2 + (v[2, 1] * t[1])^2) == rmax)
     @NLconstraint(
         OCP,
         m[1] * v[1, 1]^2 * t[1] + #vx^2 going
@@ -541,11 +638,106 @@ function PlotRangeContours(
         annotate!(
             DepotCoord[1] + r[i] * cos(θ),
             DepotCoord[2] + r[i] * sin(θ),
-            Plots.text(s1, FontSize, rotation = rad2deg(θ-π/2)),
+            Plots.text(s1, FontSize, rotation = rad2deg(θ - π / 2)),
         )
         xlabel!(L"x")
         ylabel!(L"y")
     end
     display(p)
     return p
+end
+
+function PlotRangeTiers!(
+    Er = 10000,
+    UASPos = [0.0, 0.0],
+    tmax = 100,
+    mass = [2, 1],
+)
+    p = plot!(
+        CircleShape(
+            UASPos[1],
+            UASPos[2],
+            maxRange(Er, [mass[2], mass[2]], tmax),
+        ),
+        seriestype = [:shape],
+        c = :green,
+        linecolor = :black,
+        linealpha = 0.1,
+        #linewidth = 0.0,
+        legend = :false,
+        fillalpha = 0.3,
+        aspecratio = 1,
+    )
+    p = plot!(
+        CircleShape(
+            UASPos[1],
+            UASPos[2],
+            maxRange(Er, [mass[1], mass[1]], tmax),
+        ),
+        seriestype = [:shape],
+        c = :blue,
+        linecolor = :black,
+        linealpha = 0.1,
+        #linewidth = 0.0,
+        legend = :false,
+        fillalpha = 0.3,
+        aspecratio = 1,
+    )
+    p = plot!(
+        CircleShape(UASPos[1], UASPos[2], maxRange(Er, mass, tmax)),
+        seriestype = [:shape],
+        c = :red,
+        linecolor = :black,
+        linealpha = 0.1,
+        #linewidth = 0.0,
+        legend = :false,
+        fillalpha = 0.3,
+        aspecratio = 1,
+    )
+end
+
+function plotpath(ns = ones(1))
+    x = zeros(2, 1001)
+    for i in ns
+        j = 1
+        for θ in range(0, size(x, 2) - 1, step = 1)
+            x[:, j] .= path(θ, i)
+            j = j + 1
+        end
+    end
+    plot(x[1, :], x[2, :], xlims = (0, 1300), ylims = (400, 1300), lw = 2)
+end
+
+function plotpath!(ns = ones(1))
+    x = zeros(2, 1001)
+    for i in ns
+        j = 1
+        for θ in range(0, size(x, 2) - 1, step = 1)
+            x[:, j] .= path(θ, i)
+            j = j + 1
+        end
+    end
+    plot!(x[1, :], x[2, :], xlims = (0, 1300), ylims = (400, 1300), lw = 2)
+end
+
+function plotPosSamples(samples, p = 1)
+    plotpath(p)
+    c = path.(samples, p)
+    scatter!(c)
+end
+
+function plotPosSamples!(samples, p = 1)
+    plotpath!(p)
+    c = path.(samples, p)
+    scatter!(c, markersize = 3.0)
+end
+
+function plotTimeSamples(samples, p = 1)
+    samples = DriverPosFunction(samples)
+    plotPosSamples(samples, p)
+end
+
+function plotTimeSamples!(samples, p = 1)
+    samples = DriverPosFunction(samples)
+    plotPosSamples!(samples, p)
 end
