@@ -28,9 +28,21 @@ function DriverUncertainty(t, gp)
     return Σ[1]
 end
 
-function DriverPosition(ti, tf, gp = nothing, tol = 1e-1)
-    integral, err = quadgk(x -> DriverVelocity(x, gp), ti, tf, rtol = tol)
-    return integral
+function DriverPosition(ti, TimeSamples, gp = nothing, tol = 1e-1)
+    if minimum(size(TimeSamples)) == 1
+        integral, err = quadgk(x -> DriverVelocity(x, gp), ti, TimeSamples, rtol = tol)
+        return integral
+    else
+        nsamples, npaths = size(TimeSamples)
+        PosArray = zeros(nsamples, npaths)
+        for p = 1:npaths
+            Threads.@threads for i = 1:nsamples
+                PosArray[i, p], err =
+                    quadgk(x -> DriverVelocity(x, gp), ti, TimeSamples[i,p], rtol = tol)
+                end
+        end
+    end
+    return PosArray
 end
 
 function DriverUncertainty(ti, tf, gp, tol = 1e-1)

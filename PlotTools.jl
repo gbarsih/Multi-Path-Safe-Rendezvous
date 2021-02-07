@@ -205,48 +205,33 @@ function PlotRangeTiers!(
     )
 end
 
-function plotpath(ns = ones(1))
-    x = zeros(2, 1001)
-    for i in ns
-        j = 1
-        for θ in range(0, size(x, 2) - 1, step = 1)
-            x[:, j] .= path(θ, i)
-            j = j + 1
-        end
-    end
-    plot(x[1, :], x[2, :], xlims = (0, 1300), ylims = (400, 1300), lw = 2)
-end
-
 function plotpath!(ns = ones(1))
     x = zeros(2, 1001)
+    p = plot!(legend = :false)
     for i in ns
         j = 1
         for θ in range(0, size(x, 2) - 1, step = 1)
             x[:, j] .= path(θ, i)
             j = j + 1
         end
+        p = plot!(x[1, :], x[2, :], xlims = (0, 1300), ylims = (400, 1300))
     end
-    plot!(x[1, :], x[2, :], xlims = (0, 1300), ylims = (400, 1300), lw = 2)
+    display(p)
+    return p
 end
 
-function plotPosSamples(samples, p = 1)
-    plotpath(p)
-    c = path.(samples, p)
-    scatter!(c)
+function plotPosSamples!(PosSamples, np = ones(1))
+    pp = plot!()
+    Threads.@threads for p in np
+        c = path.(PosSamples[:,p], p)
+        pp = scatter!(c, markersize = 3.0)
+    end
+    display(pp)
+    return pp
 end
 
-function plotPosSamples!(samples, p = 1)
-    plotpath!(p)
-    c = path.(samples, p)
-    scatter!(c, markersize = 3.0)
-end
-
-function plotTimeSamples(samples, p = 1)
-    samples = DriverPosFunction(samples)
-    plotPosSamples(samples, p)
-end
-
-function plotTimeSamples!(samples, p = 1)
-    samples = DriverPosFunction(samples)
-    plotPosSamples!(samples, p)
+function plotTimeSamples!(TimeSamples,np,ti=0.0)
+    PosSamples = DriverPosition(ti,TimeSamples)
+    PosSamples[PosSamples.>=Mp] .= Mp
+    plotPosSamples!(PosSamples, np)
 end
