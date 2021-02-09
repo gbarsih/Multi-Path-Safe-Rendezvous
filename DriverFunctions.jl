@@ -1,5 +1,6 @@
 function VelocityPrior(t) #historical model
-    return 10.0 .+ 4.0 .* sin(t ./ 10)
+    #return 10.0 .+ 4.0 .* sin(t ./ 10)
+    return MaxDriverSpeed .+ 1.0 .* sin(t ./ 10)
 end
 
 function VariancePrior(t) #historical model
@@ -7,7 +8,7 @@ function VariancePrior(t) #historical model
 end
 
 function Deviation(v) #deviation function
-    return v >= 10 ? 2.0 : -1.0
+    return v >= MaxDriverSpeed ? 1.0 : -1.0
 end
 
 #I want to integrate the driver position, which is prior+deviation
@@ -29,14 +30,14 @@ function DriverUncertainty(t, gp)
 end
 
 function DriverPosition(ti, TimeSamples, gp = nothing, tol = 1e-1)
-    if minimum(size(TimeSamples)) == 1
+    if isa(TimeSamples, Int) || isa(TimeSamples, Float64)
         integral, err = quadgk(x -> DriverVelocity(x, gp), ti, TimeSamples, rtol = tol)
         return integral
     else
         nsamples, npaths = size(TimeSamples)
         PosArray = zeros(nsamples, npaths)
         for p = 1:npaths
-            Threads.@threads for i = 1:nsamples
+            for i = 1:nsamples
                 PosArray[i, p], err =
                     quadgk(x -> DriverVelocity(x, gp), ti, TimeSamples[i,p], rtol = tol)
                 end

@@ -105,6 +105,23 @@ function drawConvexHull(TimeSamples, p = [1, 2], ucol = :blue)
     plot!(VPolygon(hull), alpha = 0.2, color = ucol)
 end
 
+function drawMultiConvexHull(PosSamples, p = [1, 2], ucol = :blue)
+    ls, lp = size(PosSamples)
+    if lp != length(p)
+        error("Incorrect input dimensions")
+    end
+    θ = DriverPosFunction(TimeSamples)
+    v = zeros(lt * lp)
+    v = [zeros(2) for i = 1:lt*lp]
+    for j = 1:lp
+        idx1 = 1 + (j - 1) * lt
+        idx2 = j * lt
+        v[idx1:idx2] = [path(i, j, true) for i in θ]
+    end
+    hull = convex_hull(v)
+    plot!(VPolygon(hull), alpha = 0.2, color = ucol)
+end
+
 function CircleShape(h, k, r)
     θ = range(0, 2 * π, length = 500)
     h .+ r * sin.(θ), k .+ r * cos.(θ)
@@ -222,7 +239,7 @@ end
 
 function plotPosSamples!(PosSamples, np = ones(1))
     pp = plot!()
-    Threads.@threads for p in np
+    for p in np
         c = path.(PosSamples[:,p], p)
         pp = scatter!(c, markersize = 3.0)
     end

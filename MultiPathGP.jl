@@ -29,6 +29,9 @@ function rankMultiPath(
     UASPos,
     n,
     p = [1, 2],
+    gp = nothing,
+    ti = 0.0,
+    DriverPos = 0.0,
     method = "BestFirst",
     Er = Inf,
     sol = nothing,
@@ -41,7 +44,7 @@ function rankMultiPath(
     x = hcat(UASPos[1] * ones(lt), UASPos[2] * ones(lt)) #x contains a copy-vector of x-y coordinates of the UAS
     E = zeros(lt, np)
     Threads.@threads for i = 1:np #for each path
-        PosSamples = DriverPosition(0.0, TimeSamples)
+        PosSamples = DriverPosition(ti, TimeSamples, gp) .+ DriverPos
         v = (pathSample2Array(path.(PosSamples[:, i], i)) .- x) ./ TimeSamples
         E[:, i] =
             m[1] .* diag(v * v') .* TimeSamples[:, i] .+
@@ -118,13 +121,6 @@ PrevPNR = [0.0, 0.0]
 γ = 1.0
 UASPosVec = zeros(N, 2)
 
-OptTimeSample = zeros(length(p))
-TimeSamples = SampleTime(μ, Σ, N)
-elites = rankMultiPath(TimeSamples, UASPos, Ns, np)
-pp = plot()
-pp = plotpath!(np)
-pp = plotTimeSamples!(TimeSamples, np)
-
 function iterateCEM(μ, Σ, np)
     OptTimeSample = zeros(length(p))
     for i = 1:1000
@@ -136,8 +132,61 @@ function iterateCEM(μ, Σ, np)
     return μ, Σ, OptTimeSample
 end
 
-iterateCEM(μ, Σ, np)
+#iterateCEM(μ, Σ, np)
 
+OptTimeSample = zeros(length(p))
+TimeSamples = SampleTime(μ, Σ, N)
+elites = rankMultiPath(TimeSamples, UASPos, Ns, np)
+pp = plot()
+pp = plotpath!(np)
+pp = plotTimeSamples!(TimeSamples, np)
 
-#TODO add gp and animate CE convergence.
+function animateGpCem(tt = 40, ti = 5, dt = 1)
+    #first build an initial dataset and gp
+    t = range(0.0, stop = ti, step = dt)
+    li = length(t)
+    D = zeros(li, 2)
+    D[:, 1] = VelocityPrior.(t)
+    D[:, 2] = Deviation.(VelocityPrior.(t)) + NoiseStd .* randn(li)
+    gp = LearnDeviationFunction(D, true, "full")
+    #now we move the driver, collect new data, update gp and sample on the gp
+    t = range(0.0, stop = tt, step = dt)
+    l = length(t)
+    D = [D ; zeros(l,2)]
+    DriverPos = 0.0
+    DriverPosVec = zeros(l)
+    DriverPosEstimateVec = zeros(l)
+    DriverPosErrorVec = zeros(l)
+    PosSamples = zeros(N,length(p))
+    OptTimeSample = zeros(length(p))
+    anim = @animate for i = 1:l
+        #sample driver velocity
+        DriverVelSample = DriverVelocity(t[i]) + NoiseStd * randn(1)[1]
+        DriverDeviationSample = DriverVelSample - VelocityPrior(t[i])
+        #add to dataset
+        D[li+i, 1] = VelocityPrior(t[i])
+        D[li+i, 2] = DriverDeviationSample
+        #re-train gp
+        gp = LearnDeviationFunction(D[1:(li+i),:], true, "DTC")
+        #sample rendezvous candidates
+        TimeSamples = SampleTime(μ, Σ, N)
+        elites = rankMultiPath(TimeSamples, UASPos, Ns, np, gp, t[i], DriverPos)
+        PosSamples = DriverPosition(t[i], TimeSamples, gp) .+ DriverPos
+        CEM(μ, Σ, np, elites, OptTimeSample, TimeSamples)
+        l = @layout [a ; b]
+        pp = plot()
+        pp = plotpath!(np)
+        pp = plotTimeSamples!(TimeSamples, np)
+        po = plot(gp,xlims=(6,10),ylim=(-2,2))
+        pp = plot(pp,po,layout=l)
+        DriverPosVec[i] = DriverPos
+        DriverPosEstimateVec[i] = DriverPosition(0.0, t[i])
+        DriverPosErrorVec[i] = DriverPosVec[i] - DriverPosEstimateVec[i]
+        DriverPos = DriverPos + DriverVelocity(t[i])*dt
+        @show μ, Σ, i
+    end
+    gif(anim, "GpCem.gif", fps = 20)
+end
+
+#TODO finish multi path convex hull function.
 #TODO close the loop using best first method.

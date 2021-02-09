@@ -112,6 +112,8 @@ function LearnDeviationFunction(D, useConst = false, method = "full")
         )
         X = Matrix(x')
         return GaussianProcesses.DTC(X, Xu, y, mFcn, kern, logObsNoise)
+    else
+        error("Invalid GP method")
     end
 end
 
