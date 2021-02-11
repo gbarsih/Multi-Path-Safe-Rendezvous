@@ -190,5 +190,122 @@ function animateGpCem(tt = 20, ti = 5, dt = 1)
     gif(anim, "GpCem.gif", fps = 15)
 end
 
-#TODO finish multi path convex hull function.
 #TODO close the loop using best first method.
+
+#=
+Closed loop mission using BestFirst. Order of things:
+-Collect sensor data
+-Update driver model with gp
+-Update distribution with CEM
+-Compute trajectory using MPC
+-Send control iputs to UAS
+-Update driver position
+-Update UAS position
+=#
+
+function mission(Er = 18000, method = "BestFirst", tt = 80, ti = 5, dt = 1)
+    clearconsole()
+    UASPos = [800, 450]
+    LPos = [400, 550]
+    ts = 0
+    PNRStat = false
+    N = 100
+    p = [1, 2]
+    ptgt = 2
+    dt = 1
+    PrevPNR = [0.0, 0.0]
+    μ = 80 * ones(2)
+    Σ = 40 * ones(2)
+    Ns = 5
+    β = 1.0
+    γ = 1.0
+    UASPosVec = zeros(N, 2)
+    OptTimeSample = zeros(length(p))
+    #TimeSamples = ts:120
+    t = range(0.0, stop = ti, step = dt)
+    li = length(t)
+    D = zeros(li, 2)
+    D[:, 1] = VelocityPrior.(t)
+    D[:, 2] = Deviation.(VelocityPrior.(t)) + NoiseStd .* randn(li)
+    gp = LearnDeviationFunction(D, true, "full")
+    #now we move the driver, collect new data, update gp and sample on the gp
+    tv = range(0.0, stop = tt, step = dt)
+    l = length(tv)
+    D = [D; zeros(l, 2)]
+    DriverPos = 0.0
+    DriverPosVec = zeros(l)
+    DriverPosEstimateVec = zeros(l)
+    DriverPosErrorVec = zeros(l)
+    PosSamples = zeros(N, length(p))
+    OptTimeSample = zeros(length(p))
+    anim = @animate for i = 1:l
+        #sample driver velocity
+        DriverVelSample = DriverVelocity(tv[i]) + NoiseStd * randn(1)[1]
+        DriverDeviationSample = DriverVelSample - VelocityPrior(tv[i])
+        #add to dataset
+        D[li+i, 1] = VelocityPrior(tv[i])
+        D[li+i, 2] = DriverDeviationSample
+        #re-train gp
+        gp = LearnDeviationFunction(D[1:(li+i), :], true, "DTC")
+        #sample rendezvous candidates
+        UASPosVec[i, :] = UASPos
+        TimeSamples = SampleTime(μ, Σ, N)
+        elites =
+            rankMultiPath(TimeSamples, UASPos, Ns, np, gp, tv[i], DriverPos)
+        CEM(μ, Σ, np, elites, OptTimeSample, TimeSamples)
+        PosSamples = DriverPosition(tv[i], TimeSamples, gp) .+ DriverPos
+        #MPC goes here
+        v, t = RendezvousPlanner(
+            UASPos,
+            LPos,
+            OptTimeSample,
+            Er,
+            tv[i],
+            PrevPNR,
+            false,
+            ptgt,
+            gp,
+            DriverPos
+        )
+        PrevPNR = v[:, 1] .* t[1] .+ UASPos
+        Ed =
+            m[1] * v[1, 1]^2 * t[1] +
+            m[1] * v[1, 2]^2 * t[2] +
+            m[2] * v[1, 3]^2 * t[3] +
+            m[1] * v[2, 1]^2 * t[1] +
+            m[1] * v[2, 2]^2 * t[2] +
+            m[2] * v[2, 3]^2 * t[3] +
+            m[1] * alpha * t[1] +
+            m[1] * alpha * t[2] +
+            m[2] * alpha * t[3]
+        x, y, Er = uav_dynamics(
+            UASPos[1],
+            UASPos[2],
+            v[1, 1],
+            v[2, 1],
+            dt,
+            Er,
+            vmax,
+            PNRStat ? m[2] : m[1],
+        )
+        UASPos = [x, y]
+        if ptgt == 2
+            pv = pv2
+        else
+            pv = pv1
+        end
+        if t[1] <= 1.0 ||
+           EuclideanDistance(
+            path(DriverPosition(tv[i], OptTimeSample[ptgt], gp) + DriverPos),
+            pv[2, :],
+        ) <= 10
+            break
+        end
+        DriverPosVec[i] = DriverPos
+        DriverPosEstimateVec[i] = DriverPosition(0.0, tv[i])
+        DriverPosErrorVec[i] = DriverPosVec[i] - DriverPosEstimateVec[i]
+        DriverPos = DriverPos + DriverVelocity(tv[i]) * dt
+        @show t, i, Σ, μ, Er, Ed
+    end
+    gif(anim, "RDV_Anim_MP.gif", fps = 15)
+end

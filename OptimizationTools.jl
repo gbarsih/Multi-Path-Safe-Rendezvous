@@ -14,7 +14,7 @@ Instructions:   Run this file in juno with Julia 1.2.0 or later.
 Requirements:   JuMP, Ipopt, Plots, LinearAlgebra, BenchmarkTools.
 =#
 
-function DeterministicUniformMPC(
+function RendezvousPlanner(
     UASPos,
     LPos,
     OptTimeSample,
@@ -23,8 +23,10 @@ function DeterministicUniformMPC(
     PrevPNR = [0, 0],
     PNRStat = false,
     p = 1,
+    gp = nothing,
+    DriverPos = 0.0,
 )
-    RDVPos = path(DriverPosFunction(OptTimeSample))
+    RDVPos = path(DriverPosition(ti, OptTimeSample[p], gp) + DriverPos)
     MPC = Model(
         optimizer_with_attributes(
             Ipopt.Optimizer,
@@ -61,7 +63,7 @@ function DeterministicUniformMPC(
         m[1] * alpha * t[1] +
         m[1] * alpha * t[4] <= Er
     )
-    ta = OptTimeSample - ts #available time is time to RDV minus current time
+    ta = OptTimeSample[p] - ts #available time is time to RDV minus current time
     @constraint(MPC, t[1] + t[2] <= ta)
     if PrevPNR[1] != 0 || PrevPNR[2] != 0
         PNRDist = @expression(MPC, PrevPNR - PNR)
