@@ -31,16 +31,21 @@ end
 
 function DriverPosition(ti, TimeSamples, gp = nothing, tol = 1e-1)
     if isa(TimeSamples, Int) || isa(TimeSamples, Float64)
-        integral, err = quadgk(x -> DriverVelocity(x, gp), ti, TimeSamples, rtol = tol)
+        integral, err =
+            quadgk(x -> DriverVelocity(x, gp), ti, TimeSamples, rtol = tol)
         return integral
     else
         nsamples, npaths = size(TimeSamples)
         PosArray = zeros(nsamples, npaths)
         for p = 1:npaths
             for i = 1:nsamples
-                PosArray[i, p], err =
-                    quadgk(x -> DriverVelocity(x, gp), ti, TimeSamples[i,p], rtol = tol)
-                end
+                PosArray[i, p], err = quadgk(
+                    x -> DriverVelocity(x, gp),
+                    ti,
+                    TimeSamples[i, p],
+                    rtol = tol,
+                )
+            end
         end
     end
     return PosArray

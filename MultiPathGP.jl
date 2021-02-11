@@ -95,7 +95,7 @@ function CEM(μ, Σ, np, elites, OptTimeSample, TimeSamples)
         μn = sum(TimeSamples[elites[:, j], j]) / Ns
         μ[j] = γ * μn + (1 - γ) * μ[j]
         Σ[j] =
-            β * (sum((TimeSamples[elites[:, j], j] .- μ[j]) .^ 2) ./ Ns + 1) +
+            β * (sum((TimeSamples[elites[:, j], j] .- μ[j]) .^ 2) ./ Ns + 0.5) +
             (1 - β) * Σ[j]
         Σ[j] = min(Σ[j], 100)
         OptTimeSample[j] = TimeSamples[elite[j], j]
@@ -141,7 +141,7 @@ pp = plot()
 pp = plotpath!(np)
 pp = plotTimeSamples!(TimeSamples, np)
 
-function animateGpCem(tt = 40, ti = 5, dt = 1)
+function animateGpCem(tt = 20, ti = 5, dt = 1)
     #first build an initial dataset and gp
     t = range(0.0, stop = ti, step = dt)
     li = length(t)
@@ -152,12 +152,12 @@ function animateGpCem(tt = 40, ti = 5, dt = 1)
     #now we move the driver, collect new data, update gp and sample on the gp
     t = range(0.0, stop = tt, step = dt)
     l = length(t)
-    D = [D ; zeros(l,2)]
+    D = [D; zeros(l, 2)]
     DriverPos = 0.0
     DriverPosVec = zeros(l)
     DriverPosEstimateVec = zeros(l)
     DriverPosErrorVec = zeros(l)
-    PosSamples = zeros(N,length(p))
+    PosSamples = zeros(N, length(p))
     OptTimeSample = zeros(length(p))
     anim = @animate for i = 1:l
         #sample driver velocity
@@ -167,25 +167,27 @@ function animateGpCem(tt = 40, ti = 5, dt = 1)
         D[li+i, 1] = VelocityPrior(t[i])
         D[li+i, 2] = DriverDeviationSample
         #re-train gp
-        gp = LearnDeviationFunction(D[1:(li+i),:], true, "DTC")
+        gp = LearnDeviationFunction(D[1:(li+i), :], true, "DTC")
         #sample rendezvous candidates
         TimeSamples = SampleTime(μ, Σ, N)
-        elites = rankMultiPath(TimeSamples, UASPos, Ns, np, gp, t[i], DriverPos)
-        PosSamples = DriverPosition(t[i], TimeSamples, gp) .+ DriverPos
+        elites =
+            rankMultiPath(TimeSamples, UASPos, Ns, np, gp, t[i], DriverPos)
         CEM(μ, Σ, np, elites, OptTimeSample, TimeSamples)
-        l = @layout [a ; b]
+        PosSamples = DriverPosition(t[i], TimeSamples, gp) .+ DriverPos
+        l = @layout [a; b]
         pp = plot()
         pp = plotpath!(np)
-        pp = plotTimeSamples!(TimeSamples, np)
-        po = plot(gp,xlims=(6,10),ylim=(-2,2))
-        pp = plot(pp,po,layout=l)
+        pp = plotTimeSamples!(TimeSamples, np, t[i], DriverPos, gp)
+        pp = drawMultiConvexHull(PosSamples, p)
+        po = plot(gp, xlims = (6, 10), ylim = (-2, 2))
+        pp = plot(pp, po, layout = l)
         DriverPosVec[i] = DriverPos
         DriverPosEstimateVec[i] = DriverPosition(0.0, t[i])
         DriverPosErrorVec[i] = DriverPosVec[i] - DriverPosEstimateVec[i]
-        DriverPos = DriverPos + DriverVelocity(t[i])*dt
+        DriverPos = DriverPos + DriverVelocity(t[i]) * dt
         @show μ, Σ, i
     end
-    gif(anim, "GpCem.gif", fps = 20)
+    gif(anim, "GpCem.gif", fps = 15)
 end
 
 #TODO finish multi path convex hull function.

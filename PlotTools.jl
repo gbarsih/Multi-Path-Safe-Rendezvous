@@ -17,7 +17,7 @@ Requirements:   JuMP, Ipopt, Plots, LinearAlgebra, BenchmarkTools.
 rng = MersenneTwister(1234);
 default(palette = :tol_bright)
 default(dpi = 200)
-default(size = (600, 600))
+default(size = (800, 800))
 default(lw = 3)
 default(margin = 10mm)
 FontSize = 18
@@ -110,16 +110,15 @@ function drawMultiConvexHull(PosSamples, p = [1, 2], ucol = :blue)
     if lp != length(p)
         error("Incorrect input dimensions")
     end
-    θ = DriverPosFunction(TimeSamples)
-    v = zeros(lt * lp)
-    v = [zeros(2) for i = 1:lt*lp]
+    v = [zeros(2) for i = 1:ls*lp]
     for j = 1:lp
-        idx1 = 1 + (j - 1) * lt
-        idx2 = j * lt
+        θ = PosSamples[:, j]
+        idx1 = 1 + (j - 1) * ls
+        idx2 = j * ls
         v[idx1:idx2] = [path(i, j, true) for i in θ]
     end
     hull = convex_hull(v)
-    plot!(VPolygon(hull), alpha = 0.2, color = ucol)
+    plot!(VPolytope(hull), alpha = 0.2, color = ucol)
 end
 
 function CircleShape(h, k, r)
@@ -233,22 +232,26 @@ function plotpath!(ns = ones(1))
         end
         p = plot!(x[1, :], x[2, :], xlims = (0, 1300), ylims = (400, 1300))
     end
-    display(p)
     return p
 end
 
 function plotPosSamples!(PosSamples, np = ones(1))
     pp = plot!()
     for p in np
-        c = path.(PosSamples[:,p], p)
+        c = path.(PosSamples[:, p], p)
         pp = scatter!(c, markersize = 3.0)
     end
-    display(pp)
     return pp
 end
 
-function plotTimeSamples!(TimeSamples,np,ti=0.0)
-    PosSamples = DriverPosition(ti,TimeSamples)
+function plotTimeSamples!(
+    TimeSamples,
+    np,
+    ti = 0.0,
+    DriverPos = 0.0,
+    gp = nothing,
+)
+    PosSamples = DriverPosition(ti, TimeSamples, gp) .+ DriverPos
     PosSamples[PosSamples.>=Mp] .= Mp
     plotPosSamples!(PosSamples, np)
 end
