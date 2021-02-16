@@ -60,7 +60,11 @@ function rankMultiPath(
         Threads.@threads for i = 1:np
             elites[:, i] = partialsortperm(E[:, i], 1:min(n, lt))
         end
-        return elites
+        #to select the path using this policy
+        #get the best from each, and output the best
+        #TODO: add previous solution functionality to sway towards the Depot.
+        ptgt = argmin(E[elites][1,:])
+        return elites, ptgt
     else
         error("Invalid Method Argument")
     end
@@ -133,14 +137,14 @@ function iterateCEM(μ, Σ, np)
 end
 
 #iterateCEM(μ, Σ, np)
-
+#=
 OptTimeSample = zeros(length(p))
 TimeSamples = SampleTime(μ, Σ, N)
 elites = rankMultiPath(TimeSamples, UASPos, Ns, np)
 pp = plot()
 pp = plotpath!(np)
 pp = plotTimeSamples!(TimeSamples, np)
-
+=#
 function animateGpCem(tt = 20, ti = 5, dt = 1)
     #first build an initial dataset and gp
     t = range(0.0, stop = ti, step = dt)
@@ -206,7 +210,8 @@ Closed loop mission using BestFirst. Order of things:
 function mission(Er = 18000, method = "BestFirst", tt = 80, ti = 5, dt = 1)
     clearconsole()
     UASPos = [800, 450]
-    LPos = [400, 550]
+    LPos = [1000, 650]
+    #LPos = [800, 450]
     ts = 0
     PNRStat = false
     N = 100
@@ -214,13 +219,12 @@ function mission(Er = 18000, method = "BestFirst", tt = 80, ti = 5, dt = 1)
     ptgt = 2
     dt = 1
     PrevPNR = [0.0, 0.0]
-    μ = 80 * ones(2)
-    Σ = 40 * ones(2)
+    μ = 60 * ones(2)
+    Σ = 20 * ones(2)
     Ns = 5
     β = 1.0
     γ = 1.0
     UASPosVec = zeros(N, 2)
-    OptTimeSample = zeros(length(p))
     #TimeSamples = ts:120
     t = range(0.0, stop = ti, step = dt)
     li = length(t)
@@ -238,6 +242,8 @@ function mission(Er = 18000, method = "BestFirst", tt = 80, ti = 5, dt = 1)
     DriverPosErrorVec = zeros(l)
     PosSamples = zeros(N, length(p))
     OptTimeSample = zeros(length(p))
+    sol = nothing
+    method = "BestFirst"
     anim = @animate for i = 1:l
         #sample driver velocity
         DriverVelSample = DriverVelocity(tv[i]) + NoiseStd * randn(1)[1]
@@ -250,8 +256,8 @@ function mission(Er = 18000, method = "BestFirst", tt = 80, ti = 5, dt = 1)
         #sample rendezvous candidates
         UASPosVec[i, :] = UASPos
         TimeSamples = SampleTime(μ, Σ, N)
-        elites =
-            rankMultiPath(TimeSamples, UASPos, Ns, np, gp, tv[i], DriverPos)
+        elites, ptgt =
+            rankMultiPath(TimeSamples, UASPos, Ns, np, gp, tv[i], DriverPos, method, Er, sol)
         CEM(μ, Σ, np, elites, OptTimeSample, TimeSamples)
         PosSamples = DriverPosition(tv[i], TimeSamples, gp) .+ DriverPos
         #MPC goes here
@@ -265,7 +271,29 @@ function mission(Er = 18000, method = "BestFirst", tt = 80, ti = 5, dt = 1)
             false,
             ptgt,
             gp,
-            DriverPos
+            DriverPos,
+        )
+        sol = (v, t)
+        pp = plot()
+        pp = plot!(UASPosVec[1:i, 1], UASPosVec[1:i, 2], legend = false)
+        pp = drawMultiConvexHull(PosSamples, p)
+        pp = plotPlan!(
+            UASPos,
+            LPos,
+            v,
+            t,
+            TimeSamples,
+            length(p),
+            tv[i],
+            DriverPos,
+            gp,
+        )
+        pp = plotTimeSamples!(TimeSamples, p, tv[i], DriverPos, gp)
+        pp = scatter!(
+            path(DriverPos, ptgt),
+            markersize = 6.0,
+            label = "",
+            markercolor = :green,
         )
         PrevPNR = v[:, 1] .* t[1] .+ UASPos
         Ed =
@@ -294,18 +322,22 @@ function mission(Er = 18000, method = "BestFirst", tt = 80, ti = 5, dt = 1)
         else
             pv = pv1
         end
-        if t[1] <= 1.0 ||
-           EuclideanDistance(
-            path(DriverPosition(tv[i], OptTimeSample[ptgt], gp) + DriverPos),
-            pv[2, :],
-        ) <= 10
+        # if (t[1] <= 1.0 ||
+        #    EuclideanDistance(
+        #     path(DriverPosition(tv[i], OptTimeSample[ptgt], gp) + DriverPos),
+        #     pv[2, :],
+        # ) <= 10) && tv[i] > 10
+        #     break
+        # end
+        if (t[1] <= 1.0 && tv[i] > 10)
             break
         end
+        #@show t, i, Σ, μ, Er, Ed
         DriverPosVec[i] = DriverPos
         DriverPosEstimateVec[i] = DriverPosition(0.0, tv[i])
         DriverPosErrorVec[i] = DriverPosVec[i] - DriverPosEstimateVec[i]
         DriverPos = DriverPos + DriverVelocity(tv[i]) * dt
-        @show t, i, Σ, μ, Er, Ed
+        @show i, t[1], OptTimeSample, ptgt
     end
     gif(anim, "RDV_Anim_MP.gif", fps = 15)
 end

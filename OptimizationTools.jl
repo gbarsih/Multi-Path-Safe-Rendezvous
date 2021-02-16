@@ -22,11 +22,12 @@ function RendezvousPlanner(
     ts,
     PrevPNR = [0, 0],
     PNRStat = false,
-    p = 1,
+    p = 2,
     gp = nothing,
     DriverPos = 0.0,
 )
-    RDVPos = path(DriverPosition(ti, OptTimeSample[p], gp) + DriverPos)
+    RDVPos = path(DriverPosition(ts, OptTimeSample[p], gp) + DriverPos, p)
+    #@show OptTimeSample, RDVPos
     MPC = Model(
         optimizer_with_attributes(
             Ipopt.Optimizer,
@@ -67,7 +68,7 @@ function RendezvousPlanner(
     @constraint(MPC, t[1] + t[2] <= ta)
     if PrevPNR[1] != 0 || PrevPNR[2] != 0
         PNRDist = @expression(MPC, PrevPNR - PNR)
-        @constraint(MPC, PNRDist' * PNRDist <= 1000.0)
+        #@constraint(MPC, PNRDist' * PNRDist <= 1000.0)
     end
     @objective(MPC, Min, sum(t[i] for i = 2:4) - 1 * t[1])
 
@@ -105,7 +106,8 @@ function maxRange(Er, mass = [2, 1], tmax = 1000)
         m[1] * alpha * t[1] + #hovering going
         m[2] * alpha * t[2] <= Er #hovering back
     )
-    @constraint(OCP, sum(t[i] for i = 1:2) <= tmax)
+    #@constraint(OCP, sum(t[i] for i = 1:2) <= tmax)
+    @constraint(OCP, t[1] <= tmax)
     JuMP.optimize!(OCP)
     v = value.(v)
     t = value.(t)

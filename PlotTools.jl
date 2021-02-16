@@ -64,11 +64,11 @@ function plotPlan!(UASPos, LPos, RDVPos, v, t)
     p = plot!(DPlan[1, :], DPlan[2, :])
 end
 
-function plotPlan!(UASPos, LPos, v, t, TimeSamples)
+function plotPlan!(UASPos, LPos, v, t, TimeSamples, np, ts, DriverPos, gp = nothing)
     np = size(TimeSamples, 2)
     for i = 1:np
         plotpath!(i)
-        plotTimeSamples!(TimeSamples[:, i], i)
+        #plotTimeSamples!(TimeSamples, np, ts, DriverPos, gp)
     end
     PNR = UASPos + v[:, 1] * t[1]
     RDV = PNR + v[:, 2] * t[2]
@@ -85,9 +85,13 @@ function plotPlan!(UASPos, LPos, v, t, TimeSamples)
     p2 = pv2[2, :]
     annotate!(p1[1] - ho, p1[2] + vo, text("Path 1", 12, :right))
     annotate!(p2[1] - ho, p2[2] - vo, text("Path 2", 12, :right))
-    p = scatter!(DPlan[1, :], DPlan[2, :])
-    p = plot!(DPlan[1, :], DPlan[2, :], lw = 2)
-    p = plot!(APlan[1, :], APlan[2, :], linestyle = :dash)
+    pp = scatter!(DPlan[1, :], DPlan[2, :])
+    pp = plot!(DPlan[1, :], DPlan[2, :], lw = 2)
+    pp = plot!(APlan[1, :], APlan[2, :], linestyle = :dash)
+end
+
+function plotMultiPlan!(UASPos, LPos, v, t, TimeSamples)
+
 end
 
 function drawConvexHull(TimeSamples, p = [1, 2], ucol = :blue)
