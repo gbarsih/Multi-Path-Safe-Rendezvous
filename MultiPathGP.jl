@@ -41,14 +41,40 @@ function rankMultiPath(
         error("Invalid #map v #smpl")
     end
     lt = size(TimeSamples, 1)
-    x = hcat(UASPos[1] * ones(lt), UASPos[2] * ones(lt)) #x contains a copy-vector of x-y coordinates of the UAS
+    x = hcat(UASPos[1] * ones(lt), UASPos[2] * ones(lt))
+    #x contains a copy-vector of x-y coordinates of the UAS
     E = zeros(lt, np)
     Threads.@threads for i = 1:np #for each path
         PosSamples = DriverPosition(ti, TimeSamples, gp) .+ DriverPos
-        v = (pathSample2Array(path.(PosSamples[:, i], i)) .- x) ./ TimeSamples
-        E[:, i] =
-            m[1] .* diag(v * v') .* TimeSamples[:, i] .+
-            alpha * TimeSamples[:, i]
+        EuclideanPositions = pathSample2Array(path.(PosSamples[:, i], i))
+        v = (EuclideanPositions .- x) ./ TimeSamples
+        if sol == nothing
+            E[:, i] =
+                m[1] .* diag(v * v') .* TimeSamples[:, i] .+
+                m[1] * alpha * TimeSamples[:, i]
+        else #we have a solution available
+            vs = sol[1]
+            ts = sol[2]
+            LPos = sol[3]
+            #first adjust time:
+            #tSampleMean = mean(TimeSamples)
+            #tSol = ts[1] + ts[2] + ti #the time the MPC is using
+            #tNew = .- (TimeSamples .- mean(TimeSamples)) .+ ts[3]
+            #tNew[findall(x->x<=0, tNew)] .= 0
+            tSol = ts[3] #just use the time provided by the solver
+            #second compute new velocities:
+            LPos = hcat(LPos[1] * ones(lt), LPos[2] * ones(lt))
+            vNew = (LPos .- EuclideanPositions) ./ tSol
+            vNew = diag(vNew * vNew')
+            #vNewAvg = mean(vNew)
+            #vMPC = diag(vs' * vs)[3]
+            #@show vMPC, vNewAvg
+            E[:, i] =
+                m[1] .* diag(v * v') .* TimeSamples[:, i] .+
+                m[1] * alpha * TimeSamples[:, i] .+ 1 .*(
+                m[2] .* diag(vNew * vNew') .* tSol .+
+                m[2] * alpha * tSol)
+        end
     end
     # E now contains energies for each sample group. Next choose a method
     replace!(E, NaN => Inf)
@@ -56,14 +82,16 @@ function rankMultiPath(
         return [argmin(E[:, 1]) argmin(E[:, 2])]
     end
     if method == "BestFirst"
+        Emins = zeros(np)
         elites = zeros(Int16, n, np)
         Threads.@threads for i = 1:np
             elites[:, i] = partialsortperm(E[:, i], 1:min(n, lt))
+            idx = elites[1,i]
+            Emins[i] = E[idx,i]
         end
         #to select the path using this policy
         #get the best from each, and output the best
-        #TODO: add previous solution functionality to sway towards the Depot.
-        ptgt = argmin(E[elites][1,:])
+        ptgt = argmin(Emins)
         return elites, ptgt
     else
         error("Invalid Method Argument")
@@ -99,7 +127,7 @@ function CEM(μ, Σ, np, elites, OptTimeSample, TimeSamples)
         μn = sum(TimeSamples[elites[:, j], j]) / Ns
         μ[j] = γ * μn + (1 - γ) * μ[j]
         Σ[j] =
-            β * (sum((TimeSamples[elites[:, j], j] .- μ[j]) .^ 2) ./ Ns + 0.5) +
+            β * (sum((TimeSamples[elites[:, j], j] .- μ[j]) .^ 2) ./ Ns + 1.0) +
             (1 - β) * Σ[j]
         Σ[j] = min(Σ[j], 100)
         OptTimeSample[j] = TimeSamples[elite[j], j]
@@ -107,44 +135,16 @@ function CEM(μ, Σ, np, elites, OptTimeSample, TimeSamples)
     return μ, Σ, OptTimeSample
 end
 
-
-np = [1, 2]
-μ = [50.0, 50.0] #initial means
-Σ = [40.0, 40.0] #initial variances
-N = 100 #number of time samples
-Ns = 5
-UASPos = [900, 450]
-LPos = [400, 550]
-ts = 0
-PNRStat = false
-p = [1, 2]
-ptgt = 2
-dt = 1
-PrevPNR = [0.0, 0.0]
-β = 1.0
-γ = 1.0
-UASPosVec = zeros(N, 2)
-
 function iterateCEM(μ, Σ, np)
     OptTimeSample = zeros(length(p))
     for i = 1:1000
         TimeSamples = SampleTime(μ, Σ, N)
         elites = rankMultiPath(TimeSamples, UASPos, Ns, np)
         CEM(μ, Σ, np, elites, OptTimeSample, TimeSamples)
-        @show μ, Σ
     end
     return μ, Σ, OptTimeSample
 end
 
-#iterateCEM(μ, Σ, np)
-#=
-OptTimeSample = zeros(length(p))
-TimeSamples = SampleTime(μ, Σ, N)
-elites = rankMultiPath(TimeSamples, UASPos, Ns, np)
-pp = plot()
-pp = plotpath!(np)
-pp = plotTimeSamples!(TimeSamples, np)
-=#
 function animateGpCem(tt = 20, ti = 5, dt = 1)
     #first build an initial dataset and gp
     t = range(0.0, stop = ti, step = dt)
@@ -194,8 +194,6 @@ function animateGpCem(tt = 20, ti = 5, dt = 1)
     gif(anim, "GpCem.gif", fps = 15)
 end
 
-#TODO close the loop using best first method.
-
 #=
 Closed loop mission using BestFirst. Order of things:
 -Collect sensor data
@@ -209,8 +207,8 @@ Closed loop mission using BestFirst. Order of things:
 
 function mission(Er = 18000, method = "BestFirst", tt = 80, ti = 5, dt = 1)
     clearconsole()
-    UASPos = [800, 450]
-    LPos = [1000, 650]
+    UASPos = [1000, 450]
+    LPos = [800, 450]
     #LPos = [800, 450]
     ts = 0
     PNRStat = false
@@ -220,7 +218,7 @@ function mission(Er = 18000, method = "BestFirst", tt = 80, ti = 5, dt = 1)
     dt = 1
     PrevPNR = [0.0, 0.0]
     μ = 60 * ones(2)
-    Σ = 20 * ones(2)
+    Σ = 10 * ones(2)
     Ns = 5
     β = 1.0
     γ = 1.0
@@ -231,7 +229,7 @@ function mission(Er = 18000, method = "BestFirst", tt = 80, ti = 5, dt = 1)
     D = zeros(li, 2)
     D[:, 1] = VelocityPrior.(t)
     D[:, 2] = Deviation.(VelocityPrior.(t)) + NoiseStd .* randn(li)
-    gp = LearnDeviationFunction(D, true, "full")
+    gp = LearnDeviationFunction(D, true, "DTC")
     #now we move the driver, collect new data, update gp and sample on the gp
     tv = range(0.0, stop = tt, step = dt)
     l = length(tv)
@@ -256,9 +254,19 @@ function mission(Er = 18000, method = "BestFirst", tt = 80, ti = 5, dt = 1)
         #sample rendezvous candidates
         UASPosVec[i, :] = UASPos
         TimeSamples = SampleTime(μ, Σ, N)
-        elites, ptgt =
-            rankMultiPath(TimeSamples, UASPos, Ns, np, gp, tv[i], DriverPos, method, Er, sol)
-        CEM(μ, Σ, np, elites, OptTimeSample, TimeSamples)
+        elites, ptgt = rankMultiPath(
+            TimeSamples,
+            UASPos,
+            Ns,
+            p,
+            gp,
+            tv[i],
+            DriverPos,
+            method,
+            Er,
+            sol,
+        )
+        CEM(μ, Σ, p, elites, OptTimeSample, TimeSamples)
         PosSamples = DriverPosition(tv[i], TimeSamples, gp) .+ DriverPos
         #MPC goes here
         v, t = RendezvousPlanner(
@@ -273,7 +281,7 @@ function mission(Er = 18000, method = "BestFirst", tt = 80, ti = 5, dt = 1)
             gp,
             DriverPos,
         )
-        sol = (v, t)
+        sol = (v, t, LPos)
         pp = plot()
         pp = plot!(UASPosVec[1:i, 1], UASPosVec[1:i, 2], legend = false)
         pp = drawMultiConvexHull(PosSamples, p)
@@ -337,7 +345,7 @@ function mission(Er = 18000, method = "BestFirst", tt = 80, ti = 5, dt = 1)
         DriverPosEstimateVec[i] = DriverPosition(0.0, tv[i])
         DriverPosErrorVec[i] = DriverPosVec[i] - DriverPosEstimateVec[i]
         DriverPos = DriverPos + DriverVelocity(tv[i]) * dt
-        @show i, t[1], OptTimeSample, ptgt
+        @show i, t[1], Er, ptgt
     end
     gif(anim, "RDV_Anim_MP.gif", fps = 15)
 end

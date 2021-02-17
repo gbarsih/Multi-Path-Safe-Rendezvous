@@ -12,7 +12,7 @@ default(legendfontsize = FontSize)
 default(titlefontsize = FontSize)
 
 m = [2, 1]
-alpha = 5
+alpha = 0
 vmax = 25
 vo = 50
 ho = 20
