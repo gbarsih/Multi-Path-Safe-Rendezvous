@@ -27,7 +27,7 @@ NoiseVar = 0.05
 NoiseStd = sqrt(NoiseVar)
 NoiseLog = log10(NoiseVar)
 # setup driver learning problem.
-default(size = 2 .* [800, 600])
+default(size = 1 .* [800, 600])
 default(palette = :tol_bright)
 default(dpi = 300)
 default(lw = 3)
@@ -64,7 +64,9 @@ function LearnDeviationFunction(D, useConst = false, method = "full")
     else
         mFcn = MeanConst(mean(D[:, 2]))
     end
-    kern = SE(0.0, 0.0)
+    #kern = SE(0.0, 0.0)
+    kern = Matern(3/2,zeros(5),0.0)
+    lik = BernLik()
     logObsNoise = NoiseLog
     if method == "full"
         return GPE(x, y, mFcn, kern, logObsNoise)
@@ -122,8 +124,22 @@ function TestLearning(n = 100)
     D = zeros(n, 2)
     D[:, 1] = VelocityPrior.(t)
     D[:, 2] = Deviation.(VelocityPrior.(t)) + NoiseStd .* randn(n)
-    gp = LearnDeviationFunction(D, true, "DTC")
-    plot(gp, ylims = (-2, 10), xlims = (0, 16))
+    gp = LearnDeviationFunction(D, true, "full")
+    plot(
+        legend = false,
+        xlabel = "Prototypical Speed [θ/s]",
+        ylabel = "Deviation Function [θ/s]",
+        title = "Deviation Function Learning Performance"
+    )
+    t = range(0, stop = 20, length = 1000)
+    plot!(t, Deviation.(t), linestyle = :dash, color = :red, linealpha = 0.5)
+    plot!(
+        gp,
+        ylims = (-2, 3),
+        xlims = (4, 12),
+        markeralpha = 0.6,
+    )
+    savefig("gp_perf.png")
 end
 
 function BenchmarkLearning(n = 100)
