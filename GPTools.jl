@@ -29,7 +29,7 @@ NoiseVar = 0.05
 NoiseStd = sqrt(NoiseVar)
 NoiseLog = log10(NoiseVar)
 # setup driver learning problem.
-default(size = 1 .* [800, 600])
+default(size = 2 .* [800, 600])
 default(palette = :tol_bright)
 default(dpi = 300)
 default(lw = 3)
@@ -226,13 +226,14 @@ function PlotPosPrediction(n = 100, t0 = 20.0, tf = 100.0)
     D = zeros(n, 2)
     D[:, 1] = VelocityPrior.(t)
     D[:, 2] = Deviation.(VelocityPrior.(t)) + NoiseStd .* randn(n)
-    gp = LearnDeviationFunction(D, true, "full")
+    gp = LearnDeviationFunction(D, true, "DTC")
     #plot(gp, ylims = (-2, 10), xlims = (0, 16))
     t = range(0.0, stop = tf, length = 100)
     p = zeros(length(t))
     s = zeros(length(t))
     v = zeros(length(t))
     vp = VelocityPrior.(t)
+    #@benchmark DriverPosition($t[1], $t[2], $gp, 1e-1)
     Threads.@threads for i = 1:length(t)
         p[i] = DriverPosition(t[1], t[i], gp)
         s[i] = DriverUncertainty(t[1], t[i], gp, 1e-3)
@@ -246,7 +247,7 @@ function PlotPosPrediction(n = 100, t0 = 20.0, tf = 100.0)
         xlabel = "Time [s]",
         label = "Driver Velocity",
         xlims = (0, 100),
-        ylims = (5, 16),
+        ylims = (5, 12),
     )
     p1 = plot!(t, vp, label = "Velocity Prior")
     minv = minimum(D[:, 1])
@@ -269,7 +270,7 @@ function PlotPosPrediction(n = 100, t0 = 20.0, tf = 100.0)
     p3 = plot(
         gp,
         ylims = (-2, 6),
-        xlims = (5, 16),
+        xlims = (5, 12),
         title = "Gaussian Process",
         xlabel = "Prototypical Speed [θ/s]",
         ylabel = "Dev. Fcn [θ/s]",

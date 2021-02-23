@@ -29,7 +29,7 @@ function DriverUncertainty(t, gp)
     return Σ[1]
 end
 
-function DriverPosition(ti, TimeSamples, gp = nothing, tol = 1e-1)
+function DriverPosition(ti, TimeSamples, gp = nothing, tol = 1e-3)
     if isa(TimeSamples, Int) || isa(TimeSamples, Float64)
         integral, err =
             quadgk(x -> DriverVelocity(x, gp), ti, TimeSamples, rtol = tol)
@@ -51,9 +51,26 @@ function DriverPosition(ti, TimeSamples, gp = nothing, tol = 1e-1)
     return PosArray
 end
 
-function DriverUncertainty(ti, tf, gp, tol = 1e-1)
-    integral, err = quadgk(x -> DriverUncertainty(x, gp), ti, tf, rtol = tol)
-    return integral
+function DriverUncertainty(ti, TimeSamples, gp, tol = 1e-1)
+    if isa(TimeSamples, Int) || isa(TimeSamples, Float64)
+        integral, err =
+            quadgk(x -> DriverUncertainty(x, gp), ti, TimeSamples, rtol = tol)
+        return integral
+    else
+        nsamples, npaths = size(TimeSamples)
+        UArray = zeros(nsamples, npaths)
+        for p = 1:npaths
+            for i = 1:nsamples
+                UArray[i, p], err = quadgk(
+                    x -> DriverUncertainty(x, gp),
+                    ti,
+                    TimeSamples[i, p],
+                    rtol = tol,
+                )
+            end
+        end
+    end
+    return UArray
 end
 
 function DriverPositionVector(tv = [0.0, 1.0], gp = nothing)

@@ -24,10 +24,21 @@ include("OptimizationTools.jl")
 include("PlotTools.jl")
 include("DriverFunctions.jl")
 
+function rowNormSquared(mat)
+    A = zeros(Float64, size(mat, 2))
+    for j in 1:size(mat, 2)
+        for i in 1:size(mat, 1)
+            A[j] += mat[i, j]^2
+        end
+        #A[j] = sqrt(A[j])
+    end
+    A
+end
+
 function rankMultiPath(
     TimeSamples,
     UASPos,
-    n,
+    Ns,
     p = [1, 2],
     gp = nothing,
     ti = 0.0,
@@ -35,6 +46,7 @@ function rankMultiPath(
     method = "BestFirst",
     Er = Inf,
     sol = nothing,
+    riska = false,
 )
     np = size(TimeSamples, 2)
     if np != length(p)
@@ -44,13 +56,22 @@ function rankMultiPath(
     x = hcat(UASPos[1] * ones(lt), UASPos[2] * ones(lt))
     #x contains a copy-vector of x-y coordinates of the UAS
     E = zeros(lt, np)
+    PosSamples = DriverPosition(ti, TimeSamples, gp) .+ DriverPos
+    USamples = DriverUncertainty(ti, TimeSamples, gp)
+    pU = PosSamples .+ USamples #Position + σ
+    nU = PosSamples .- USamples #Position - σ
     Threads.@threads for i = 1:np #for each path
-        PosSamples = DriverPosition(ti, TimeSamples, gp) .+ DriverPos
         EuclideanPositions = pathSample2Array(path.(PosSamples[:, i], i))
-        v = (EuclideanPositions .- x) ./ TimeSamples
+        pUEuclidean = pathSample2Array(path.(pU[:, i], i))
+        nUEuclidean = pathSample2Array(path.(nU[:, i], i))
+        EuclideanDistances = abs.(EuclideanPositions .- x) #mean distance
+
+        #now figure out which uncertainty (p or nU) is bad for rendezvous energy
+
+        v = EuclideanDistances ./ TimeSamples
         if sol == nothing
             E[:, i] =
-                m[1] .* diag(v * v') .* TimeSamples[:, i] .+
+                m[1] .* rowNormSquared(v') .* TimeSamples[:, i] .+
                 m[1] * alpha * TimeSamples[:, i]
         else #we have a solution available
             vs = sol[1]
@@ -60,24 +81,23 @@ function rankMultiPath(
             #second compute new velocities:
             LPos = hcat(LPos[1] * ones(lt), LPos[2] * ones(lt))
             vNew = (LPos .- EuclideanPositions) ./ tSol
-            vNew = diag(vNew * vNew')
             E[:, i] =
-                m[1] .* diag(v * v') .* TimeSamples[:, i] .+
+                m[1] .* rowNormSquared(v') .* TimeSamples[:, i] .+
                 m[1] * alpha * TimeSamples[:, i] .+ 1 .*(
-                m[2] .* diag(vNew * vNew') .* tSol .+
+                m[2] .* rowNormSquared(vNew') .* tSol .+
                 m[2] * alpha * tSol)
         end
     end
     # E now contains energies for each sample group. Next choose a method
     replace!(E, NaN => Inf)
-    if n == 1
+    if Ns == 1
         return [argmin(E[:, 1]) argmin(E[:, 2])]
     end
     if method == "BestFirst"
         Emins = zeros(np)
-        elites = zeros(Int16, n, np)
+        elites = zeros(Int16, Ns, np)
         Threads.@threads for i = 1:np
-            elites[:, i] = partialsortperm(E[:, i], 1:min(n, lt))
+            elites[:, i] = partialsortperm(E[:, i], 1:min(Ns, lt))
             idx = elites[1,i]
             Emins[i] = E[idx,i]
         end
