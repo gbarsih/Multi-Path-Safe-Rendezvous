@@ -56,19 +56,11 @@ function rankMultiPath(
             vs = sol[1]
             ts = sol[2]
             LPos = sol[3]
-            #first adjust time:
-            #tSampleMean = mean(TimeSamples)
-            #tSol = ts[1] + ts[2] + ti #the time the MPC is using
-            #tNew = .- (TimeSamples .- mean(TimeSamples)) .+ ts[3]
-            #tNew[findall(x->x<=0, tNew)] .= 0
             tSol = ts[3] #just use the time provided by the solver
             #second compute new velocities:
             LPos = hcat(LPos[1] * ones(lt), LPos[2] * ones(lt))
             vNew = (LPos .- EuclideanPositions) ./ tSol
             vNew = diag(vNew * vNew')
-            #vNewAvg = mean(vNew)
-            #vMPC = diag(vs' * vs)[3]
-            #@show vMPC, vNewAvg
             E[:, i] =
                 m[1] .* diag(v * v') .* TimeSamples[:, i] .+
                 m[1] * alpha * TimeSamples[:, i] .+ 1 .*(

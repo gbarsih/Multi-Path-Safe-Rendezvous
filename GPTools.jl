@@ -18,7 +18,9 @@ Requirements:   JuMP, Ipopt, Plots, LinearAlgebra, BenchmarkTools.
 using Plots, LinearAlgebra, Random, Statistics, ColorSchemes, LazySets
 using BenchmarkTools, Dates, Measures
 using GaussianProcesses
+using Distributions
 using Random
+import Statistics
 using Optim
 using QuadGK
 using Measures
@@ -65,7 +67,7 @@ function LearnDeviationFunction(D, useConst = false, method = "full")
         mFcn = MeanConst(mean(D[:, 2]))
     end
     #kern = SE(0.0, 0.0)
-    kern = Matern(3/2,zeros(5),0.0)
+    kern = Matern(3 / 2, zeros(5), 0.0)
     lik = BernLik()
     logObsNoise = NoiseLog
     if method == "full"
@@ -119,27 +121,72 @@ function LearnDeviationFunction(D, useConst = false, method = "full")
     end
 end
 
-function TestLearning(n = 100)
+function TestLearning(n = 100, method = "full")
+    t = range(0, stop = 100, length = n)
+    D = zeros(n, 2)
+    D[:, 1] = VelocityPrior.(t)
+    D[:, 2] = Deviation.(VelocityPrior.(t)) + NoiseStd .* randn(n)
+    gp = LearnDeviationFunction(D, true, method)
+    plot(
+        legend = false,
+        xlabel = "Prototypical Speed [θ/s]",
+        ylabel = "Deviation Function [θ/s]",
+        title = "Deviation Function Learning Performance",
+    )
+    t = range(0, stop = 20, length = 1000)
+    plot!(t, Deviation.(t), linestyle = :dash, color = :red, linealpha = 0.5)
+    p = plot!(gp, ylims = (-2, 3), xlims = (4, 12), markeralpha = 0.6)
+    display(p)
+    savefig("gp_perf.png")
+end
+
+function CompareMethods(n = 100)
     t = range(0, stop = 100, length = n)
     D = zeros(n, 2)
     D[:, 1] = VelocityPrior.(t)
     D[:, 2] = Deviation.(VelocityPrior.(t)) + NoiseStd .* randn(n)
     gp = LearnDeviationFunction(D, true, "full")
+    D[:, 2] = Deviation.(VelocityPrior.(t)) + NoiseStd .* randn(n)
+    gp2 = LearnDeviationFunction(D, true, "DTC")
     plot(
-        legend = false,
+        legend = :topleft,
         xlabel = "Prototypical Speed [θ/s]",
         ylabel = "Deviation Function [θ/s]",
-        title = "Deviation Function Learning Performance"
+        title = "Fitting Performance, DTC vs Full GP",
     )
     t = range(0, stop = 20, length = 1000)
-    plot!(t, Deviation.(t), linestyle = :dash, color = :red, linealpha = 0.5)
-    plot!(
+    p = plot!(
         gp,
         ylims = (-2, 3),
         xlims = (4, 12),
-        markeralpha = 0.6,
+        markeralpha = 0.2,
+        markercolor = :black,
+        linecolor = :black,
+        fillcolor = :black,
+        fillalpha = 0.2,
+        label = ["Full GP" ""],
     )
-    savefig("gp_perf.png")
+    p = plot!(
+        gp2,
+        ylims = (-2, 3),
+        xlims = (4, 12),
+        markeralpha = 0.2,
+        markercolor = :green,
+        linecolor = :green,
+        fillcolor = :green,
+        fillalpha = 0.2,
+        label = ["DTC GP" ""],
+    )
+    plot!(
+        t,
+        Deviation.(t),
+        linestyle = :dash,
+        color = :red,
+        linealpha = 0.5,
+        label = "True Deviation",
+    )
+    display(p)
+    savefig("gp_comp.png")
 end
 
 function BenchmarkLearning(n = 100)
@@ -232,4 +279,80 @@ function PlotPosPrediction(n = 100, t0 = 20.0, tf = 100.0)
     p = plot(p1, p2, p3, layout = l)
     display(p)
     savefig("learning_ex.png")
+end
+
+function fstar(x::Float64)
+    return abs(x - 5) * cos(2 * x)
+end
+
+function benchmarkGP()
+
+    n = 50:50:300
+    times = zeros(length(n), 2)
+    stds = copy(times)
+    σy = 10.0
+    for i = 1:length(n)
+        @show i, n[i]
+        Random.seed!(1) # for reproducibility
+        Xdistr = Beta(7, 7)
+        ϵdistr = Normal(0, σy)
+        x = rand(Xdistr, n[i]) * 10
+        X = Matrix(x')
+        Y = fstar.(x) .+ rand(ϵdistr, n[i])
+        k = SEIso(log(0.3), log(5.0))
+        Xu = Matrix(
+            quantile(
+                x,
+                [
+                    0.2,
+                    0.25,
+                    0.3,
+                    0.35,
+                    0.4,
+                    0.45,
+                    0.5,
+                    0.55,
+                    0.6,
+                    0.65,
+                    0.7,
+                    0.98,
+                ],
+            )',
+        )
+        GPE(X, Y, MeanConst(mean(Y)), k, log(σy))
+        t = @benchmark gp_full = GPE($X, $Y, $MeanConst(mean(Y)), $k, $log(σy))
+        @show t
+        t = t.:times
+        t[t.>=3*median(t)] .= median(t)
+        times[i, 1] = median(t)
+        stds[i, 1] = std(t)
+        gp_DTC = GaussianProcesses.DTC(X, Xu, Y, MeanConst(mean(Y)), k, log(σy))
+        t = @benchmark gp_DTC = GaussianProcesses.DTC(
+            $X,
+            $Xu,
+            $Y,
+            $MeanConst(mean(Y)),
+            $k,
+            $log(σy),
+        )
+        @show t
+        t = t.:times
+        t[t.>=5*median(t)] .= median(t)
+        times[i, 2] = median(t)
+        stds[i, 2] = std(t)
+    end
+    p = plot(
+        n,
+        times[:, 1],
+        yerror = stds[:, 1],
+        label = "Full GP",
+        legend = :topleft,
+    )
+    p = plot!(n, times[:, 2], yerror = stds[:, 2], label = "DTC GP")
+    p = xlabel!("N")
+    p = ylabel!("CPU Time [ns]")
+    p = title!("GPR Computation Times")
+    display(p)
+    savefig("gpr_times.png")
+    return times, stds, n
 end
