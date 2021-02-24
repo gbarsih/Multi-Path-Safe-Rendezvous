@@ -268,7 +268,6 @@ Closed loop mission using BestFirst. Order of things:
 =#
 
 function mission(Er = 18000, rmethod = "BestFirst", tt = 80, ti = 5, dt = 1)
-    clearconsole()
     UASPos = [1000, 450]
     LPos = [600, 600]
     #LPos = [800, 450]
