@@ -54,7 +54,7 @@ function rankMultiPath(
     gp = nothing,
     ti = 0.0,
     DriverPos = 0.0,
-    method = "BestFirst",
+    rmethod = "BestFirst",
     Er = Inf,
     sol = nothing,
     riska = false,
@@ -124,12 +124,12 @@ function rankMultiPath(
                 (m[2] .* rowNormSquared(vNew') .* tSol .+ m[2] * alpha * tSol)
         end
     end
-    # E now contains energies for each sample group. Next choose a method
+    # E now contains energies for each sample group. Next choose a rmethod
     replace!(E, NaN => Inf)
     if Ns == 1
         return [argmin(E[:, 1]) argmin(E[:, 2])]
     end
-    if method == "BestFirst"
+    if rmethod == "BestFirst"
         Emins = zeros(np)
         elites = zeros(Int16, Ns, np)
         Threads.@threads for i = 1:np
@@ -141,7 +141,7 @@ function rankMultiPath(
         #get the best from each, and output the best
         ptgt = argmin(Emins)
         return elites, ptgt
-    elseif method == "WorstFirst"
+    elseif rmethod == "WorstFirst"
         Emins = zeros(np)
         elites = zeros(Int16, Ns, np)
         Threads.@threads for i = 1:np
@@ -154,7 +154,7 @@ function rankMultiPath(
         ptgt = argmax(Emins)
         return elites, ptgt
     else
-        error("Invalid Method Argument")
+        error("Invalid rmethod Argument")
     end
     Es = E[:, 1] .+ E[:, 2]
     SumElites = partialsortperm(Es, 1:min(n, lt))
@@ -267,10 +267,10 @@ Closed loop mission using BestFirst. Order of things:
 -Update UAS position
 =#
 
-function mission(Er = 18000, method = "BestFirst", tt = 80, ti = 5, dt = 1)
+function mission(Er = 18000, rmethod = "BestFirst", tt = 80, ti = 5, dt = 1)
     clearconsole()
     UASPos = [1000, 450]
-    LPos = [800, 450]
+    LPos = [600, 600]
     #LPos = [800, 450]
     ts = 0
     PNRStat = false
@@ -301,6 +301,7 @@ function mission(Er = 18000, method = "BestFirst", tt = 80, ti = 5, dt = 1)
     PosSamples = zeros(N, length(p))
     OptTimeSample = zeros(length(p))
     sol = nothing
+    riska = true
     anim = @animate for i = 1:l
         #sample driver velocity
         DriverVelSample = DriverVelocity(tv[i]) + NoiseStd * randn(1)[1]
@@ -321,9 +322,10 @@ function mission(Er = 18000, method = "BestFirst", tt = 80, ti = 5, dt = 1)
             gp,
             tv[i],
             DriverPos,
-            method,
+            rmethod,
             Er,
             sol,
+            riska,
         )
         CEM(μ, Σ, p, elites, OptTimeSample, TimeSamples)
         PosSamples = DriverPosition(tv[i], TimeSamples, gp) .+ DriverPos
