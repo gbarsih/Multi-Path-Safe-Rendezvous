@@ -38,7 +38,7 @@ function DriverPosition(ti, TimeSamples, gp = nothing, tol = 1e-3)
         nsamples, npaths = size(TimeSamples)
         PosArray = zeros(nsamples, npaths)
         for p = 1:npaths
-            for i = 1:nsamples
+            Threads.@threads for i = 1:nsamples
                 PosArray[i, p], err = quadgk(
                     x -> DriverVelocity(x, gp),
                     ti,
@@ -60,7 +60,7 @@ function DriverUncertainty(ti, TimeSamples, gp, tol = 1e-1)
         nsamples, npaths = size(TimeSamples)
         UArray = zeros(nsamples, npaths)
         for p = 1:npaths
-            for i = 1:nsamples
+            Threads.@threads for i = 1:nsamples
                 UArray[i, p], err = quadgk(
                     x -> DriverUncertainty(x, gp),
                     ti,

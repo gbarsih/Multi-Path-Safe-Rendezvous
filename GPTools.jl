@@ -68,7 +68,7 @@ function LearnDeviationFunction(D, useConst = false, method = "full")
     end
     #kern = SE(0.0, 0.0)
     kern = Matern(3 / 2, zeros(5), 0.0)
-    lik = BernLik()
+    #lik = BernLik()
     logObsNoise = NoiseLog
     if method == "full"
         return GPE(x, y, mFcn, kern, logObsNoise)

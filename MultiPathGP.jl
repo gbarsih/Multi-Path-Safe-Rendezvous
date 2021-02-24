@@ -26,11 +26,22 @@ include("DriverFunctions.jl")
 
 function rowNormSquared(mat)
     A = zeros(Float64, size(mat, 2))
-    for j in 1:size(mat, 2)
-        for i in 1:size(mat, 1)
+    for j = 1:size(mat, 2)
+        for i = 1:size(mat, 1)
             A[j] += mat[i, j]^2
         end
         #A[j] = sqrt(A[j])
+    end
+    A
+end
+
+function rowNorm(mat)
+    A = zeros(Float64, size(mat, 2))
+    for j = 1:size(mat, 2)
+        for i = 1:size(mat, 1)
+            A[j] += mat[i, j]^2
+        end
+        A[j] = sqrt(A[j])
     end
     A
 end
@@ -57,35 +68,49 @@ function rankMultiPath(
     #x contains a copy-vector of x-y coordinates of the UAS
     E = zeros(lt, np)
     PosSamples = DriverPosition(ti, TimeSamples, gp) .+ DriverPos
-    USamples = DriverUncertainty(ti, TimeSamples, gp)
-    pU = PosSamples .+ USamples #Position + σ
-    nU = PosSamples .- USamples #Position - σ
+    if riska
+        USamples = DriverUncertainty(ti, TimeSamples, gp)
+        pU = PosSamples .+ USamples #Position + σ
+        nU = PosSamples .- USamples #Position - σ
+    end
     Threads.@threads for i = 1:np #for each path
         EuclideanPositions = pathSample2Array(path.(PosSamples[:, i], i))
-        pUEuclidean = pathSample2Array(path.(pU[:, i], i))
-        nUEuclidean = pathSample2Array(path.(nU[:, i], i))
-        EuclideanDistances = abs.(EuclideanPositions .- x) #mean distance
+        EuclideanDistances = EuclideanPositions .- x #mean distance
+        if riska
+            pUEuclidean = pathSample2Array(path.(pU[:, i], i)) .- x
+            nUEuclidean = pathSample2Array(path.(nU[:, i], i)) .- x
+            mRadii =
+                max.(
+                    rowNorm(pUEuclidean'), #r_j^+
+                    rowNorm(nUEuclidean'), #r_j^-
+                    rowNorm(EuclideanDistances'), #r_j
+                )
+        else
+            mRadii = rowNorm(EuclideanDistances')
+        end
 
-        #now figure out which uncertainty (p or nU) is bad for rendezvous energy
+        v = mRadii ./ TimeSamples[:, i]
 
-        v = EuclideanDistances ./ TimeSamples
         if sol == nothing
             E[:, i] =
-                m[1] .* rowNormSquared(v') .* TimeSamples[:, i] .+
+                m[1] .* v .^ 2 .* TimeSamples[:, i] .+
                 m[1] * alpha * TimeSamples[:, i]
         else #we have a solution available
             vs = sol[1]
             ts = sol[2]
             LPos = sol[3]
             tSol = ts[3] #just use the time provided by the solver
-            #second compute new velocities:
+
+            #TODO: if we need to assess risk, compute vNew the same way
+            #advantage: we already have pU,nUEuclidean and v,
+            #just need to compute mRadii like L:83
             LPos = hcat(LPos[1] * ones(lt), LPos[2] * ones(lt))
             vNew = (LPos .- EuclideanPositions) ./ tSol
             E[:, i] =
-                m[1] .* rowNormSquared(v') .* TimeSamples[:, i] .+
-                m[1] * alpha * TimeSamples[:, i] .+ 1 .*(
-                m[2] .* rowNormSquared(vNew') .* tSol .+
-                m[2] * alpha * tSol)
+                m[1] .* v .^ 2 .* TimeSamples[:, i] .+
+                m[1] * alpha * TimeSamples[:, i] .+
+                1 .*
+                (m[2] .* rowNormSquared(vNew') .* tSol .+ m[2] * alpha * tSol)
         end
     end
     # E now contains energies for each sample group. Next choose a method
@@ -98,8 +123,8 @@ function rankMultiPath(
         elites = zeros(Int16, Ns, np)
         Threads.@threads for i = 1:np
             elites[:, i] = partialsortperm(E[:, i], 1:min(Ns, lt))
-            idx = elites[1,i]
-            Emins[i] = E[idx,i]
+            idx = elites[1, i]
+            Emins[i] = E[idx, i]
         end
         #to select the path using this policy
         #get the best from each, and output the best
@@ -360,4 +385,8 @@ function mission(Er = 18000, method = "BestFirst", tt = 80, ti = 5, dt = 1)
         @show i, t[1], Er, ptgt
     end
     gif(anim, "RDV_Anim_MP.gif", fps = 15)
+end
+
+function debugP()
+
 end
