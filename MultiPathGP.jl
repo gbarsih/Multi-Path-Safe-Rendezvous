@@ -101,11 +101,22 @@ function rankMultiPath(
             LPos = sol[3]
             tSol = ts[3] #just use the time provided by the solver
 
-            #TODO: if we need to assess risk, compute vNew the same way
-            #advantage: we already have pU,nUEuclidean and v,
-            #just need to compute mRadii like L:83
+            EuclideanDistances = LPos' .- EuclideanPositions #mean distance
+            if riska
+                pUEuclidean = LPos' .- pathSample2Array(path.(pU[:, i], i))
+                nUEuclidean = LPos' .- pathSample2Array(path.(nU[:, i], i))
+                mRadii =
+                    max.(
+                        rowNorm(pUEuclidean'), #r_j^+
+                        rowNorm(nUEuclidean'), #r_j^-
+                        rowNorm(EuclideanDistances'), #r_j
+                    )
+            else
+                mRadii = rowNorm(EuclideanDistances')
+            end
+
             LPos = hcat(LPos[1] * ones(lt), LPos[2] * ones(lt))
-            vNew = (LPos .- EuclideanPositions) ./ tSol
+            vNew = mRadii ./ tSol
             E[:, i] =
                 m[1] .* v .^ 2 .* TimeSamples[:, i] .+
                 m[1] * alpha * TimeSamples[:, i] .+
@@ -129,6 +140,18 @@ function rankMultiPath(
         #to select the path using this policy
         #get the best from each, and output the best
         ptgt = argmin(Emins)
+        return elites, ptgt
+    elseif method == "WorstFirst"
+        Emins = zeros(np)
+        elites = zeros(Int16, Ns, np)
+        Threads.@threads for i = 1:np
+            elites[:, i] = partialsortperm(E[:, i], 1:min(Ns, lt))
+            idx = elites[1, i]
+            Emins[i] = E[idx, i]
+        end
+        #to select the path using this policy
+        #get the best from each, and output the best
+        ptgt = argmax(Emins)
         return elites, ptgt
     else
         error("Invalid Method Argument")
@@ -159,6 +182,8 @@ function TestSampling(μ, Σ, N)
 end
 
 function CEM(μ, Σ, np, elites, OptTimeSample, TimeSamples)
+    β = 0.2
+    γ = 1.0
     elite = elites[1, :]
     Threads.@threads for j = 1:length(np)
         μn = sum(TimeSamples[elites[:, j], j]) / Ns
@@ -257,8 +282,6 @@ function mission(Er = 18000, method = "BestFirst", tt = 80, ti = 5, dt = 1)
     μ = 60 * ones(2)
     Σ = 10 * ones(2)
     Ns = 5
-    β = 1.0
-    γ = 1.0
     UASPosVec = zeros(N, 2)
     #TimeSamples = ts:120
     t = range(0.0, stop = ti, step = dt)
@@ -278,7 +301,6 @@ function mission(Er = 18000, method = "BestFirst", tt = 80, ti = 5, dt = 1)
     PosSamples = zeros(N, length(p))
     OptTimeSample = zeros(length(p))
     sol = nothing
-    method = "BestFirst"
     anim = @animate for i = 1:l
         #sample driver velocity
         DriverVelSample = DriverVelocity(tv[i]) + NoiseStd * randn(1)[1]
