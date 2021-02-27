@@ -409,7 +409,6 @@ function maxt1(Er = 12000, rmethod = "WorstFirst", tt = 80, ti = 5, dt = 1)
 end
 
 function CEconvergence(ntrajs = 5, niter = 5)
-    #now we move the driver, collect new data, update gp and sample on the gp
     UASPos = [800, 450]
     LPos = [600, 600]
     ts = 0
@@ -423,7 +422,7 @@ function CEconvergence(ntrajs = 5, niter = 5)
     OptTimeSample = zeros(length(p))
     gp = nothing
     resv = zeros(ntrajs, niter)
-    for j = 1:ntrajs
+    Threads.@threads for j = 1:ntrajs
         μ = 60 * ones(2) .+ 2 * randn(2)
         Σ = 10 * ones(2) .+ 1 * randn(2)
         for i = 1:niter
@@ -442,13 +441,125 @@ function CEconvergence(ntrajs = 5, niter = 5)
         resv',
         linealpha = 0.1,
         lw = 2,
-        legend = :false,
+        label = "",
         linecolor = :green,
-        ylims = (0, 10),
+        ylims = (0, 6),
     )
     resm = mean(resv, dims = 1)'
-    pp = plot!(1:niter, resm, lw = 3, linecolor = :black)
-    pp = hline!([1.0], linestyle = :dash, linecolor = :red, formatter=:latex)
+    pp = plot!(
+        1:niter,
+        resm,
+        lw = 3,
+        linecolor = :black,
+        label = L"\textrm{Mean of Trials}",
+    )
+    pp = hline!(
+        [1.0],
+        linestyle = :dash,
+        linecolor = :red,
+        formatter = :latex,
+        title = L"\textrm{Importance Sampling Rate of Convergence}",
+        xlabel = L"\textrm{Iteration}",
+        ylabel = L"\Sigma_\mathcal{A}",
+        label = L"\lambda",
+    )
     display(pp)
+    savefig("ce_con.pdf")
     return resm, resv
+end
+
+function iterDriverAndCE(tt = 20, ti = 5, dt = 1)
+    #first build an initial dataset and gp
+    t = range(0.0, stop = ti, step = dt)
+    li = length(t)
+    D = zeros(li, 2)
+    D[:, 1] = VelocityPrior.(t)
+    D[:, 2] = Deviation.(VelocityPrior.(t)) + NoiseStd .* randn(li)
+    gp = LearnDeviationFunction(D, true, "DTC")
+    #now we move the driver, collect new data, update gp and sample on the gp
+    t = range(0.0, stop = tt, step = dt)
+    l = length(t)
+    D = [D; zeros(l, 2)]
+    PosSamples = zeros(N, length(p))
+    OptTimeSample = zeros(length(p))
+    μ = 60 * ones(2) .+ 2 * randn(2)
+    Σ = 10 * ones(2) .+ 1 * randn(2)
+    UASPos = [800, 450] .+ 50 * randn(2)
+    DriverPos = 0.0
+    Σv = zeros(l)
+    for i = 1:l
+        #sample driver velocity
+        DriverVelSample = DriverVelocity(t[i]) + NoiseStd * randn(1)[1]
+        DriverDeviationSample = DriverVelSample - VelocityPrior(t[i])
+        #add to dataset
+        D[li+i, 1] = VelocityPrior(t[i])
+        D[li+i, 2] = DriverDeviationSample
+        #re-train gp
+        gp = LearnDeviationFunction(D[1:(li+i), :], true, "DTC")
+        #sample rendezvous candidates
+        TimeSamples = SampleTime(μ, Σ, N)
+        elites, ptgt =
+            rankMultiPath(TimeSamples, UASPos, Ns, [1, 2], gp, t[i], DriverPos)
+        CEM(μ, Σ, [1, 2], elites, OptTimeSample, TimeSamples)
+        PosSamples = DriverPosition(t[i], TimeSamples, gp) .+ DriverPos
+        DriverPos = DriverPos + DriverVelocity(t[i]) * dt
+        Σv[i] = Σ[1]
+    end
+    return Σv[1:end-1]
+end
+
+function CEconvergenceMdlUpdate(ntrajs = 5, niter = 50)
+    #this variant updates driver model
+    ts = 0
+    PNRStat = false
+    np = [1, 2]
+    ptgt = 2
+    dt = 1
+    N = 100
+    Ns = 5
+    PosSamples = zeros(N, length(p))
+    OptTimeSample = zeros(length(p))
+    gp = nothing
+    resv = zeros(ntrajs, niter)
+    Threads.@threads for j = 1:ntrajs
+        Σv = iterDriverAndCE(niter, 5, 1)
+        resv[j, :] = Σv'
+        @show j
+    end
+    resm = mean(resv, dims = 1)'
+    pp1 = plot(
+        1:niter,
+        resv',
+        linealpha = 0.1,
+        lw = 2,
+        label = "",
+        linecolor = :green,
+        formatter = :latex,
+    )
+    resm = mean(resv, dims = 1)'
+    pp1 = plot!(
+        1:niter,
+        resm,
+        lw = 3,
+        linecolor = :black,
+        label = L"\textrm{Mean of Trials}",
+        formatter = :latex,
+    )
+
+    pp1 = hline!(
+        [1.0],
+        linestyle = :dash,
+        linecolor = :red,
+        formatter = :latex,
+        title = L"\textrm{Importance Sampling Performance}",
+        xlabel = L"\textrm{Time} [s]",
+        ylabel = L"\Sigma_\mathcal{A}",
+        label = L"\lambda",
+        ylims = (0.75, 1.5),
+        xlims = (0, 40),
+        xticks = 1:3:40,
+    )
+    display(pp1)
+    savefig("ce_mdl_up.pdf")
+    return pp1
 end

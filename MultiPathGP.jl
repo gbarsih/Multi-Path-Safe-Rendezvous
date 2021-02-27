@@ -182,7 +182,7 @@ function TestSampling(μ, Σ, N)
 end
 
 function CEM(μ, Σ, np, elites, OptTimeSample, TimeSamples)
-    β = 0.8
+    β = 0.9
     γ = 1.0
     elite = elites[1, :]
     Threads.@threads for j = 1:length(np)
