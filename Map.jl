@@ -1,15 +1,16 @@
+default(size = 0.6 .* [800, 600])
 default(palette = :tol_bright)
-default(dpi = 200)
-default(size = (600, 600))
-default(lw = 3)
-default(margin = 10mm)
-FontSize = 18
+default(dpi = 300)
+default(lw = 2)
+default(margin = 1mm)
+FontSize = 12
 default(xtickfontsize = FontSize)
 default(ytickfontsize = FontSize)
 default(xguidefontsize = FontSize)
 default(yguidefontsize = FontSize)
 default(legendfontsize = FontSize)
 default(titlefontsize = FontSize)
+rng = MersenneTwister(1234)
 
 m = [2, 1]
 alpha = 0

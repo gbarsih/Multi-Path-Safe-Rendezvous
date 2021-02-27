@@ -14,19 +14,19 @@ Instructions:   Run this file in juno with Julia 1.2.0 or later.
 Requirements:   JuMP, Ipopt, Plots, LinearAlgebra, BenchmarkTools.
 =#
 
-rng = MersenneTwister(1234);
+default(size = 0.6 .* [800, 600])
 default(palette = :tol_bright)
-default(dpi = 200)
-default(size = (800, 800))
-default(lw = 3)
-default(margin = 10mm)
-FontSize = 18
+default(dpi = 300)
+default(lw = 2)
+default(margin = 1mm)
+FontSize = 12
 default(xtickfontsize = FontSize)
 default(ytickfontsize = FontSize)
 default(xguidefontsize = FontSize)
 default(yguidefontsize = FontSize)
 default(legendfontsize = FontSize)
 default(titlefontsize = FontSize)
+rng = MersenneTwister(1234)
 
 function plotPlan(UASPos, LPos, RDVPos, v, t)
     plotpath(1)
@@ -81,8 +81,8 @@ function plotPlan!(UASPos, LPos, v, t, TimeSamples, np, ts, DriverPos, gp = noth
     annotate!(UASPos[1], UASPos[2] - vo, text("UAS", 12, :center))
     annotate!(L[1], L[2] - vo, text("Depot", 12, :center))
     annotate!(RDV[1], RDV[2] + vo, text("RDV", 12, :right))
-    p1 = pv1[2, :]
-    p2 = pv2[2, :]
+    p1 = pv1[3, :]
+    p2 = pv2[3, :]
     annotate!(p1[1] - ho, p1[2] + vo, text("Path 1", 12, :right))
     annotate!(p2[1] - ho, p2[2] - vo, text("Path 2", 12, :right))
     pp = scatter!(DPlan[1, :], DPlan[2, :])

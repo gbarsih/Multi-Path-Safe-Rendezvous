@@ -182,7 +182,7 @@ function TestSampling(μ, Σ, N)
 end
 
 function CEM(μ, Σ, np, elites, OptTimeSample, TimeSamples)
-    β = 0.2
+    β = 0.8
     γ = 1.0
     elite = elites[1, :]
     Threads.@threads for j = 1:length(np)
@@ -267,8 +267,8 @@ Closed loop mission using BestFirst. Order of things:
 -Update UAS position
 =#
 
-function mission(Er = 18000, rmethod = "BestFirst", tt = 80, ti = 5, dt = 1)
-    UASPos = [1000, 450]
+function mission(Er = 18000, rmethod = "WorstFirst", tt = 80, ti = 5, dt = 1)
+    UASPos = [800, 450]
     LPos = [600, 600]
     #LPos = [800, 450]
     ts = 0
@@ -408,8 +408,4 @@ function mission(Er = 18000, rmethod = "BestFirst", tt = 80, ti = 5, dt = 1)
         @show i, t[1], Er, ptgt
     end
     gif(anim, "RDV_Anim_MP.gif", fps = 15)
-end
-
-function debugP()
-
 end
