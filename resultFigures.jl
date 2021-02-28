@@ -257,157 +257,6 @@ function benchmarkGP()
     return times, stds, n
 end
 
-function maxt1(Er = 12000, rmethod = "WorstFirst", tt = 80, ti = 5, dt = 1)
-    UASPos = [800, 450]
-    LPos = [600, 600]
-    #LPos = [800, 450]
-    ts = 0
-    PNRStat = false
-    N = 100
-    p = [1, 2]
-    ptgt = 2
-    dt = 1
-    PrevPNR = [0.0, 0.0]
-    μ = 60 * ones(2)
-    Σ = 10 * ones(2)
-    Ns = 5
-    UASPosVec = zeros(N, 2)
-    #TimeSamples = ts:120
-    t = range(0.0, stop = ti, step = dt)
-    li = length(t)
-    D = zeros(li, 2)
-    D[:, 1] = VelocityPrior.(t)
-    D[:, 2] = Deviation.(VelocityPrior.(t)) + NoiseStd .* randn(li)
-    gp = LearnDeviationFunction(D, true, "DTC")
-    #now we move the driver, collect new data, update gp and sample on the gp
-    tv = range(0.0, stop = tt, step = dt)
-    l = length(tv)
-    D = [D; zeros(l, 2)]
-    DriverPos = 0.0
-    DriverPosVec = zeros(l)
-    DriverPosEstimateVec = zeros(l)
-    DriverPosErrorVec = zeros(l)
-    PosSamples = zeros(N, length(p))
-    OptTimeSample = zeros(length(p))
-    sol = nothing
-    riska = true
-
-    #data streams
-    fi = 0
-    t1v = zeros(length(tv), 4)
-
-    for i = 1:l
-        #sample driver velocity
-        DriverVelSample = DriverVelocity(tv[i]) + NoiseStd * randn(1)[1]
-        DriverDeviationSample = DriverVelSample - VelocityPrior(tv[i])
-        #add to dataset
-        D[li+i, 1] = VelocityPrior(tv[i])
-        D[li+i, 2] = DriverDeviationSample
-        #re-train gp
-        gp = LearnDeviationFunction(D[1:(li+i), :], true, "DTC")
-        #sample rendezvous candidates
-        UASPosVec[i, :] = UASPos
-        TimeSamples = SampleTime(μ, Σ, N)
-        elites, ptgt = rankMultiPath(
-            TimeSamples,
-            UASPos,
-            Ns,
-            p,
-            gp,
-            tv[i],
-            DriverPos,
-            rmethod,
-            Er,
-            sol,
-            riska,
-        )
-        CEM(μ, Σ, p, elites, OptTimeSample, TimeSamples)
-        PosSamples = DriverPosition(tv[i], TimeSamples, gp) .+ DriverPos
-        #MPC goes here
-        v, t = RendezvousPlanner(
-            UASPos,
-            LPos,
-            OptTimeSample,
-            Er,
-            tv[i],
-            PrevPNR,
-            false,
-            ptgt,
-            gp,
-            DriverPos,
-        )
-        sol = (v, t, LPos)
-        pp = plot()
-        pp = plot!(UASPosVec[1:i, 1], UASPosVec[1:i, 2], legend = false)
-        pp = drawMultiConvexHull(PosSamples, p)
-        pp = plotPlan!(
-            UASPos,
-            LPos,
-            v,
-            t,
-            TimeSamples,
-            length(p),
-            tv[i],
-            DriverPos,
-            gp,
-        )
-        pp = plotTimeSamples!(TimeSamples, p, tv[i], DriverPos, gp)
-        pp = scatter!(
-            path(DriverPos, ptgt),
-            markersize = 6.0,
-            label = "",
-            markercolor = :green,
-        )
-        PrevPNR = v[:, 1] .* t[1] .+ UASPos
-        Ed =
-            m[1] * v[1, 1]^2 * t[1] +
-            m[1] * v[1, 2]^2 * t[2] +
-            m[2] * v[1, 3]^2 * t[3] +
-            m[1] * v[2, 1]^2 * t[1] +
-            m[1] * v[2, 2]^2 * t[2] +
-            m[2] * v[2, 3]^2 * t[3] +
-            m[1] * alpha * t[1] +
-            m[1] * alpha * t[2] +
-            m[2] * alpha * t[3]
-        x, y, Er = uav_dynamics(
-            UASPos[1],
-            UASPos[2],
-            v[1, 1],
-            v[2, 1],
-            dt,
-            Er,
-            vmax,
-            PNRStat ? m[2] : m[1],
-        )
-        UASPos = [x, y]
-        if ptgt == 2
-            pv = pv2
-        else
-            pv = pv1
-        end
-        # if (t[1] <= 1.0 ||
-        #    EuclideanDistance(
-        #     path(DriverPosition(tv[i], OptTimeSample[ptgt], gp) + DriverPos),
-        #     pv[2, :],
-        # ) <= 10) && tv[i] > 10
-        #     break
-        # end
-        if (t[1] <= 1.0 && tv[i] > 10)
-            break
-        end
-        #@show t, i, Σ, μ, Er, Ed
-        DriverPosVec[i] = DriverPos
-        DriverPosEstimateVec[i] = DriverPosition(0.0, tv[i])
-        DriverPosErrorVec[i] = DriverPosVec[i] - DriverPosEstimateVec[i]
-        DriverPos = DriverPos + DriverVelocity(tv[i]) * dt
-        t1v[i, :] = t
-        fi = i
-        @show i, t[1], Er, ptgt
-    end
-    @show i
-    return t1v[1:fi, :], tv[1:fi]
-end
-
 function CEconvergence(ntrajs = 5, niter = 5)
     UASPos = [800, 450]
     LPos = [600, 600]
@@ -563,3 +412,152 @@ function CEconvergenceMdlUpdate(ntrajs = 5, niter = 50)
     savefig("ce_mdl_up.pdf")
     return pp1
 end
+
+function riskcon(Er = 18000, rmethod = "WorstFirst", tt = 80, ti = 5, dt = 1)
+    UASPos = [800, 450]
+    LPos = [1000, 600]
+    #LPos = [800, 450]
+    ts = 0
+    PNRStat = false
+    N = 100
+    p = [1, 2]
+    ptgt = 2
+    dt = 1
+    PrevPNR = [0.0, 0.0]
+    μ = 60 * ones(2)
+    Σ = 10 * ones(2)
+    Ns = 5
+    UASPosVec = zeros(N, 2)
+    #TimeSamples = ts:120
+    t = range(0.0, stop = ti, step = dt)
+    li = length(t)
+    D = zeros(li, 2)
+    D[:, 1] = VelocityPrior.(t)
+    D[:, 2] = Deviation.(VelocityPrior.(t)) + NoiseStd .* randn(li)
+    gp = LearnDeviationFunction(D, true, "DTC")
+    #now we move the driver, collect new data, update gp and sample on the gp
+    tv = range(0.0, stop = tt, step = dt)
+    l = length(tv)
+    D = [D; zeros(l, 2)]
+    DriverPos = 0.0
+    DriverPosVec = zeros(l)
+    DriverPosEstimateVec = zeros(l)
+    DriverPosErrorVec = zeros(l)
+    PosSamples = zeros(N, length(p))
+    OptTimeSample = zeros(length(p))
+    sol = nothing
+    solr = 0.0
+    riska = true
+
+    riskv1 = zeros(l)
+    riskv2 = copy(riskv1)
+
+    for i = 1:l
+        #sample driver velocity
+        DriverVelSample = DriverVelocity(tv[i]) + NoiseStd * randn(1)[1]
+        DriverDeviationSample = DriverVelSample - VelocityPrior(tv[i])
+        #add to dataset
+        D[li+i, 1] = VelocityPrior(tv[i])
+        D[li+i, 2] = DriverDeviationSample
+        #re-train gp
+        gp = LearnDeviationFunction(D[1:(li+i), :], true, "DTC")
+        #sample rendezvous candidates
+        UASPosVec[i, :] = UASPos
+        TimeSamples = SampleTime(μ, Σ, N)
+        elites, ptgt = rankMultiPath(
+            TimeSamples,
+            UASPos,
+            Ns,
+            p,
+            gp,
+            tv[i],
+            DriverPos,
+            rmethod,
+            Er,
+            sol,
+            riska,
+        )
+        CEM(μ, Σ, p, elites, OptTimeSample, TimeSamples, Ns)
+        PosSamples = DriverPosition(tv[i], TimeSamples, gp) .+ DriverPos
+        #MPC goes here
+        v, t = RendezvousPlanner(
+            UASPos,
+            LPos,
+            OptTimeSample,
+            Er,
+            tv[i],
+            PrevPNR,
+            false,
+            ptgt,
+            gp,
+            DriverPos,
+        )
+        sol = (v, t, LPos, UASPos, DriverPos, tv[i], OptTimeSample, ptgt)
+        solr = sol
+        PrevPNR = v[:, 1] .* t[1] .+ UASPos
+        Ed =
+            m[1] * v[1, 1]^2 * t[1] +
+            m[1] * v[1, 2]^2 * t[2] +
+            m[2] * v[1, 3]^2 * t[3] +
+            m[1] * v[2, 1]^2 * t[1] +
+            m[1] * v[2, 2]^2 * t[2] +
+            m[2] * v[2, 3]^2 * t[3] +
+            m[1] * alpha * t[1] +
+            m[1] * alpha * t[2] +
+            m[2] * alpha * t[3]
+        x, y, Er = uav_dynamics(
+            UASPos[1],
+            UASPos[2],
+            v[1, 1],
+            v[2, 1],
+            dt,
+            Er,
+            vmax,
+            PNRStat ? m[2] : m[1],
+        )
+        UASPos = [x, y]
+        if ptgt == 2
+            pv = pv2
+        else
+            pv = pv1
+        end
+        # if (t[1] <= 1.0 ||
+        #    EuclideanDistance(
+        #     path(DriverPosition(tv[i], OptTimeSample[ptgt], gp) + DriverPos),
+        #     pv[2, :],
+        # ) <= 10) && tv[i] > 10
+        #     break
+        # end
+        if (t[1] <= 1.0 && tv[i] > 10)
+            break
+        end
+        #@show t, i, Σ, μ, Er, Ed
+        DriverPosVec[i] = DriverPos
+        DriverPosEstimateVec[i] = DriverPosition(0.0, tv[i])
+        DriverPosErrorVec[i] = DriverPosVec[i] - DriverPosEstimateVec[i]
+        DriverPos = DriverPos + DriverVelocity(tv[i]) * dt
+        vsq = rowNorm(sol[1])
+
+
+        risk1, risk2 = GPCVaR(gp, solr, ptgt)
+
+        riskv1[i] = max(risk1, 0.0)
+        riskv2[i] = max(risk2, 0.0)
+        @show risk1, risk2, i
+    end
+    #risk1 = GPCVaR(gp, solr, 1)
+    #risk2 = GPCVaR(gp, solr, 2)
+    #if (risk1 > 200 || risk2 > 200)
+    #    println("Risk too high, aborting!")
+    #end
+
+    plot(riskv1)
+    plot!(riskv2)
+
+end
+
+#TODO sunday morning:
+#two plots: first like ACC, side by side with risk stuff, add above
+#second, possibly: energy delta between predicted consumption and real
+#we would compute this with a MPC without GP that takes in the real model
+#ideally shows delta going to zero or staying negative.

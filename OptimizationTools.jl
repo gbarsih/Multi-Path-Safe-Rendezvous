@@ -217,3 +217,24 @@ function minTime(Er, mass = [2, 1], xmax = 500, ymax = 500)
     tmax = sum(t)
     return tmax
 end
+
+function minReturnEnergy(p1, p2)
+    lm = mass[2]
+    OCP = Model(
+        optimizer_with_attributes(
+            Ipopt.Optimizer,
+            "print_level" => 0,
+            "max_iter" => convert(Int64, 500),
+        ),
+    )
+    @variable(OCP, vmax >= v[i = 1:2] >= -vmax)
+    @variable(OCP, t >= 0)
+    @NLobjective(OCP, Min, v[1]^2 * t + v[2]^2 * t + alpha * t)
+    @constraint(OCP, p1[1] + v[1] * t == p2[1])
+    @constraint(OCP, p1[2] + v[2] * t == p2[2])
+    JuMP.optimize!(OCP)
+    v = value.(v)
+    t = value.(t)
+    E = lm / 2 * t * (v[1]^2  + v[2]^2) + lm * alpha * t
+    return E, t, v
+end
