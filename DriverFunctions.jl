@@ -4,7 +4,7 @@ function VelocityPrior(t) #historical model
 end
 
 function VariancePrior(t) #historical model
-    return 2.0
+    return 5.25
 end
 
 function Deviation(v) #deviation function

@@ -77,7 +77,7 @@ function plotPlan!(UASPos, LPos, v, t, TimeSamples, np, ts, DriverPos, gp = noth
     scatter!([UASPos[1]], [UASPos[2]], markersize = 5.0)
     DPlan = [UASPos PNR RDV L]
     APlan = [UASPos PNR L]
-    annotate!(PNR[1], PNR[2] + vo, text("PNR", 12, :center))
+    annotate!(PNR[1] + ho, PNR[2], text("PNR", 12, :center))
     annotate!(UASPos[1], UASPos[2] - vo, text("UAS", 12, :center))
     annotate!(L[1], L[2] - vo, text("Depot", 12, :center))
     annotate!(RDV[1], RDV[2] + vo, text("RDV", 12, :right))
@@ -90,8 +90,23 @@ function plotPlan!(UASPos, LPos, v, t, TimeSamples, np, ts, DriverPos, gp = noth
     pp = plot!(APlan[1, :], APlan[2, :], linestyle = :dash)
 end
 
-function plotMultiPlan!(UASPos, LPos, v, t, TimeSamples)
-
+function plotMap(UASPos, LPos)
+    plot(formatter = :latex)
+    plotpath!(1)
+    plotpath!(2)
+    L = LPos
+    scatter!([UASPos[1]], [UASPos[2]])
+    scatter!([LPos[1]], [LPos[2]])
+    scatter!([L[1]], [L[2]])
+    annotate!(UASPos[1], UASPos[2] + vo, text(L"\textrm{UAS}", 12, :center))
+    annotate!(L[1], L[2] - vo, text(L"\textrm{Depot}", 12, :center))
+    p1 = pv1[3, :]
+    p2 = pv2[3, :]
+    annotate!(p1[1] - ho, p1[2] + vo, text(L"\textrm{Path 1}", 12, :right))
+    annotate!(p2[1] - ho, p2[2] - vo, text(L"\textrm{Path 2}", 12, :right))
+    xlabel!(L"x\;[m]")
+    ylabel!(L"y\;[m]")
+    savefig("map.pdf")
 end
 
 function drawConvexHull(TimeSamples, p = [1, 2], ucol = :blue)

@@ -71,7 +71,7 @@ function RendezvousPlanner(
         #@constraint(MPC, PNRDist' * PNRDist <= 1000.0)
     end
     @objective(MPC, Min, sum(t[i] for i = 2:4) - 1 * t[1])
-
+    #@show m
     JuMP.optimize!(MPC)
     v = value.(v)
     t = value.(t)
@@ -151,7 +151,6 @@ function maxRange(Er, mass = [2, 1], tmax = 1000)
             "max_iter" => convert(Int64, 50000),
         ),
     )
-
     @variable(OCP, r >= 0)
     @variable(OCP, v[i = 1:2, j = 1:2] >= 0)
     @variable(OCP, t[i = 1:2] >= 0)

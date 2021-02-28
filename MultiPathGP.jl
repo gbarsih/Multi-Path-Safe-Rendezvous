@@ -15,8 +15,20 @@ Requirements:   JuMP, Ipopt, Plots, LinearAlgebra, BenchmarkTools.
 =#
 
 using Plots, LinearAlgebra, Random, Statistics, ColorSchemes, LazySets
-using JuMP, Ipopt, Measures, Printf, LaTeXStrings
-using BenchmarkTools
+using JuMP, Ipopt, Measures, Printf, LaTeXStrings, Distributions
+using BenchmarkTools, StatsPlots
+
+mass = [3, 1]
+m = mass
+alpha = 20
+vmax = 25
+vo = 50
+ho = 20
+pv1 = [0 800; 600 800; 600 900; 1300 900]
+pv2 = [0 800; 1000 800; 1000 1200]
+Mp = 1000
+MaxDriverSpeed = 8
+tb = Mp / MaxDriverSpeed
 
 include("Map.jl")
 include("GPTools.jl")
@@ -181,7 +193,7 @@ function TestSampling(μ, Σ, N)
     plotTimeSamples(TimeSamples, 1)
 end
 
-function CEM(μ, Σ, np, elites, OptTimeSample, TimeSamples)
+function CEM(μ, Σ, np, elites, OptTimeSample, TimeSamples, Ns)
     β = 0.9
     γ = 1.0
     elite = elites[1, :]
@@ -269,7 +281,7 @@ Closed loop mission using BestFirst. Order of things:
 
 function mission(Er = 18000, rmethod = "WorstFirst", tt = 80, ti = 5, dt = 1)
     UASPos = [800, 450]
-    LPos = [600, 600]
+    LPos = [1000, 600]
     #LPos = [800, 450]
     ts = 0
     PNRStat = false
@@ -326,7 +338,7 @@ function mission(Er = 18000, rmethod = "WorstFirst", tt = 80, ti = 5, dt = 1)
             sol,
             riska,
         )
-        CEM(μ, Σ, p, elites, OptTimeSample, TimeSamples)
+        CEM(μ, Σ, p, elites, OptTimeSample, TimeSamples, Ns)
         PosSamples = DriverPosition(tv[i], TimeSamples, gp) .+ DriverPos
         #MPC goes here
         v, t = RendezvousPlanner(
@@ -405,7 +417,100 @@ function mission(Er = 18000, rmethod = "WorstFirst", tt = 80, ti = 5, dt = 1)
         DriverPosEstimateVec[i] = DriverPosition(0.0, tv[i])
         DriverPosErrorVec[i] = DriverPosVec[i] - DriverPosEstimateVec[i]
         DriverPos = DriverPos + DriverVelocity(tv[i]) * dt
-        @show i, t[1], Er, ptgt
+        @show i, t[1], Er, ptgt, m
     end
     gif(anim, "RDV_Anim_MP.gif", fps = 15)
+end
+
+#Value-at-risk.
+function value_at_risk(x::Vector{Float64}, f::Vector{Float64}, α::Float64)
+    i = findfirst(p -> p ≥ α, cumsum(f))
+    if i === nothing
+        return x[end]
+    else
+        return x[i]
+    end
+end
+
+#Conditional value-at-risk.
+#jaantollander.com/post/measuring-tail-risk-using-conditional-value-at-risk/
+function conditional_value_at_risk(
+    x::Vector{Float64},
+    f::Vector{Float64},
+    α::Float64,
+)
+    x_α = value_at_risk(x, f, α)
+    if iszero(α)
+        return x_α
+    else
+        tail = x .≤ x_α
+        return (sum(x[tail] .* f[tail]) - (sum(f[tail]) - α) * x_α) / α
+    end
+end
+
+function GPCVaR(
+    gp,
+    UASPos,
+    LPos,
+    DriverPos = 0.0,
+    ti = 0.0,
+    OptTimeSample = 50.0,
+    ptgt = 1,
+    n = 1000,
+    α = 0.01
+)
+    μ = DriverPosition(ti, OptTimeSample, gp) + DriverPos #mean
+    Σ = DriverUncertainty(ti, OptTimeSample, gp) #variance
+    gpStd = sqrt(Σ)
+    gp_distr = Normal(μ, gpStd)
+    x = rand(gp_distr, n)
+    UASPosv = hcat(UASPos[1] * ones(n), UASPos[2] * ones(n))
+    LPosv = hcat(LPos[1] * ones(n), LPos[2] * ones(n))
+    EuclideanPositions = pathSample2Array(path.(x, ptgt))
+    EuclideanDistancesUAS = EuclideanPositions .- UASPosv
+    EuclideanDistancesL = EuclideanPositions .- LPosv
+    EDS = rowNorm(EuclideanDistancesUAS')
+    EDL = rowNorm(EuclideanDistancesL')
+
+    Γ1 =
+        EuclideanDistance(UASPos, path(μ, ptgt, true)) +
+        EuclideanDistance(path(μ, ptgt, true), LPos)
+    UASPosv = hcat(UASPos[1] * ones(n), UASPos[2] * ones(n))
+    LPosv = hcat(LPos[1] * ones(n), LPos[2] * ones(n))
+    # next: define our random variable
+    # distance = (Γ(UASPos,μ)+Γ(μ,LPos)) - (Γ(UASPos,x)+Γ(x,LPos))
+    ED = EDS + EDL #distances of all samples
+    xd = Γ1 .- ED
+    # To find our elusive distribution, we will sample from gp and fit.
+    ddistr = fit(Normal, xd)
+
+    #now its easy to compute CVaR of a normal distribution
+    x = sort(rand(ddistr,n))
+    x_α = VaR(ddistr, α)
+    CVaRα = CVaR(ddistr, x_α, α)
+
+    gain = -CVaRα #extra distance we have to deal with
+
+
+
+end
+
+function VaR(d, α::Real)
+    #truncate:
+    q1 = 0.001
+    q2 = 1 - q1
+    @assert(α > q1)
+    @assert(α < q2)
+    q1 = quantile(d, q1)
+    q2 = quantile(d, q2)
+    x = range(q1, stop = q2, length = 10^3)
+    Fx = cdf(d, x)
+    i = findfirst(x -> x >= α, Fx)
+    return x[i]
+end
+
+function CVaR(d, x_α::Real, α::Real)
+    x_i = quantile(d, 1e-6)
+    CVaRα, err = quadgk(x -> x*pdf(d,x), x_i, x_α, 1e-9)
+    CVaRα = 1/α * CVaRα
 end

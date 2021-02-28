@@ -12,17 +12,6 @@ default(legendfontsize = FontSize)
 default(titlefontsize = FontSize)
 rng = MersenneTwister(1234)
 
-m = [2, 1]
-alpha = 0
-vmax = 25
-vo = 50
-ho = 20
-pv1 = [0 800; 600 800; 600 900; 1300 900]
-pv2 = [0 800; 1000 800; 1000 1200]
-Mp = 1000
-MaxDriverSpeed = 8
-tb = Mp / MaxDriverSpeed
-
 function path(θ, p = 1, ArrOut = false)
     if p == 1
         nv = size(pv1, 1)

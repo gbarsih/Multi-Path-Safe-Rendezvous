@@ -28,6 +28,7 @@ using Measures
 NoiseVar = 0.05
 NoiseStd = sqrt(NoiseVar)
 NoiseLog = log10(NoiseVar)
+NoiseStdLog = log10(NoiseStd)
 # setup driver learning problem.
 default(size = 0.6 .* [800, 600])
 default(palette = :tol_bright)
@@ -67,7 +68,7 @@ function LearnDeviationFunction(D, useConst = false, method = "full")
         mFcn = MeanConst(mean(D[:, 2]))
     end
     #kern = SE(0.0, 0.0)
-    kern = Matern(3 / 2, zeros(5), 0.0)
+    kern = Matern(3 / 2, zeros(5), log10(sqrt(5.25)))
     #lik = BernLik()
     logObsNoise = NoiseLog
     if method == "full"

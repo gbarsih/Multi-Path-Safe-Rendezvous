@@ -105,6 +105,7 @@ function AnimateLearning(n = 100)
 end
 
 function PlotPosPrediction(n = 100, t0 = 20.0, tf = 100.0)
+    rng = MersenneTwister(1234)
     t = range(0, stop = t0, length = n) #just learn the first t0s
     D = zeros(n, 2)
     D[:, 1] = VelocityPrior.(t)
@@ -137,7 +138,6 @@ function PlotPosPrediction(n = 100, t0 = 20.0, tf = 100.0)
     p1 = plot!(t, vp, label = L"\dot{\theta^h}")
     minv = minimum(D[:, 1])
     maxv = maximum(D[:, 1])
-    @show minv maxv
     p1 = plot!(
         rectangle(1000, maxv - minv, -100, minv),
         opacity = 0.2,
@@ -156,7 +156,7 @@ function PlotPosPrediction(n = 100, t0 = 20.0, tf = 100.0)
     )
     p3 = plot(
         gp,
-        ylims = (-2, 3),
+        ylims = 1 .* (-2, 3),
         xlims = (4, 12),
         title = L"\textrm{Gaussian Process}",
         xlabel = L"\dot{\theta^h}\thinspace[\theta/s]",
@@ -552,12 +552,12 @@ function CEconvergenceMdlUpdate(ntrajs = 5, niter = 50)
         linecolor = :red,
         formatter = :latex,
         title = L"\textrm{Importance Sampling Performance}",
-        xlabel = L"\textrm{Time} [s]",
+        xlabel = L"\textrm{Time }[s]",
         ylabel = L"\Sigma_\mathcal{A}",
         label = L"\lambda",
         ylims = (0.75, 1.5),
         xlims = (0, 40),
-        xticks = 1:3:40,
+        xticks = 0:4:40,
     )
     display(pp1)
     savefig("ce_mdl_up.pdf")
