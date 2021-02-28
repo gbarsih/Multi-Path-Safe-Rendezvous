@@ -46,8 +46,6 @@ rng = MersenneTwister(1234)
 
 rectangle(w, h, x, y) = Shape(x .+ [0, w, w, 0], y .+ [0, 0, h, h])
 
-# Now test with learning
-
 function LearnedDeviation(gp, v) #learned deviation function
     predict_y(gp, [v])
 end

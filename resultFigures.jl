@@ -443,6 +443,12 @@ function riskcon(Er = 18000, rmethod = "WorstFirst", tt = 80, ti = 5, dt = 1)
     DriverPosVec = zeros(l)
     DriverPosEstimateVec = zeros(l)
     DriverPosErrorVec = zeros(l)
+
+    Evr = zeros(l) #remaining
+    Evd = zeros(l) #delivery
+    Eva = zeros(l) #abort
+    t1v = zeros(l) #t1
+
     PosSamples = zeros(N, length(p))
     OptTimeSample = zeros(length(p))
     sol = nothing
@@ -451,8 +457,9 @@ function riskcon(Er = 18000, rmethod = "WorstFirst", tt = 80, ti = 5, dt = 1)
 
     riskv1 = zeros(l)
     riskv2 = copy(riskv1)
-
+    iend = 0
     for i = 1:l
+        iend = i
         #sample driver velocity
         DriverVelSample = DriverVelocity(tv[i]) + NoiseStd * randn(1)[1]
         DriverDeviationSample = DriverVelSample - VelocityPrior(tv[i])
@@ -505,6 +512,18 @@ function riskcon(Er = 18000, rmethod = "WorstFirst", tt = 80, ti = 5, dt = 1)
             m[1] * alpha * t[1] +
             m[1] * alpha * t[2] +
             m[2] * alpha * t[3]
+
+        Evr[i] = Er
+        Evd[i] = Ed
+        Eva[i] =
+            m[1] * v[1, 1]^2 * t[1] +
+            m[1] * v[2, 1]^2 * t[1] +
+            m[1] * v[1, 4]^2 * t[4] +
+            m[1] * v[2, 1]^2 * t[4] +
+            m[1] * alpha * t[1] +
+            m[1] * alpha * t[4]
+
+
         x, y, Er = uav_dynamics(
             UASPos[1],
             UASPos[2],
@@ -539,11 +558,11 @@ function riskcon(Er = 18000, rmethod = "WorstFirst", tt = 80, ti = 5, dt = 1)
         vsq = rowNorm(sol[1])
 
 
-        risk1, risk2 = GPCVaR(gp, solr, ptgt)
+        risk1, risk2, maintgt = GPCVaR(gp, solr, ptgt, 10000, 0.05)
 
         riskv1[i] = max(risk1, 0.0)
         riskv2[i] = max(risk2, 0.0)
-        @show risk1, risk2, i
+        @show t[1], risk1, risk2, i, ptgt, maintgt
     end
     #risk1 = GPCVaR(gp, solr, 1)
     #risk2 = GPCVaR(gp, solr, 2)
@@ -551,8 +570,7 @@ function riskcon(Er = 18000, rmethod = "WorstFirst", tt = 80, ti = 5, dt = 1)
     #    println("Risk too high, aborting!")
     #end
 
-    plot(riskv1)
-    plot!(riskv2)
+    return riskv1, riskv2, iend, Evr, Evd, Eva
 
 end
 
@@ -561,3 +579,107 @@ end
 #second, possibly: energy delta between predicted consumption and real
 #we would compute this with a MPC without GP that takes in the real model
 #ideally shows delta going to zero or staying negative.
+
+function plotRiskTrajs(s, plt = true, Er = 16000)
+    Random.seed!(s)
+    riskv1, riskv2, iend, Evr, Evd, Eva = riskcon(Er, "WorstFirst")
+    riskv1 = riskv1[1:iend-3]
+    riskv2 = riskv2[1:iend-3]
+    Evr = Evr[1:iend-3]
+    Evd = Evd[1:iend-3]
+    Eva = Eva[1:iend-3]
+
+    plot(
+        riskv1,
+        label = L"\textrm{Main Path}",
+        title = L"\textrm{CVaR Time Evolution}",
+    )
+    pw = plot!(
+        riskv2,
+        label = L"\textrm{Secondary Path}",
+        xlabel = L"\textrm{Time }[s]",
+        ylabel = L"\textrm{CVaR}_\alpha",
+        formatter = :latex,
+    )
+    savefig("WorstFirstRisk.pdf")
+
+    plot(
+        Evr,
+        label = L"E_{r}",
+        xlabel = L"\textrm{Time }[s]",
+        ylabel = L"\textrm{Energy}",
+        formatter = :latex,
+        title = L"\textrm{Energy Allotment}",
+    )
+    plot!(
+        Eva,
+        label = L"\textrm{Abort Energy}",
+        formatter = :latex, linestyle = :dash,
+    )
+    plot!(
+        Evd,
+        label = L"\textrm{Rendezvous Energy}",
+        formatter = :latex, linestyle = :dash,
+    )
+
+    savefig("energies.pdf")
+
+
+    if plt
+        return pw
+    end
+
+    Random.seed!(s)
+    riskv1b, riskv2b, iend, Evr, Evd, Eva = riskcon(Er, "BestFirst")
+    riskv1b = riskv1b[1:iend-3]
+    riskv2b = riskv2b[1:iend-3]
+
+    plot(
+        riskv1b,
+        label = L"\textrm{Main Path}",
+        title = L"\textrm{CVaR Time Evolution}",
+    )
+    pb = plot!(
+        riskv2b,
+        label = L"\textrm{Secondary Path}",
+        xlabel = L"\textrm{Time }[s]",
+        ylabel = L"\textrm{CVaR}_\alpha",
+        formatter = :latex,
+    )
+    savefig("BestFirstRisk.pdf")
+
+    pc1 = plot(
+        riskv1,
+        label = L"\textrm{Worst First}",
+        title = L"\textrm{CVaR Time Evolution}",
+    )
+    plot!(
+        riskv1b,
+        label = L"\textrm{Best First}",
+        xlabel = L"\textrm{Time }[s]",
+        ylabel = L"\textrm{CVaR}_\gamma",
+        formatter = :latex,
+    )
+    savefig("CompRisk1.pdf")
+
+    pc2 = plot(
+        riskv2,
+        label = L"\textrm{Worst First}",
+        title = L"\textrm{Secondary Path Risk, }\gamma=0.05",
+    )
+    plot!(
+        riskv2b,
+        label = L"\textrm{Best First}",
+        xlabel = L"\textrm{Time }[s]",
+        ylabel = L"\textrm{CVaR}_\gamma",
+        formatter = :latex,
+    )
+    savefig("CompRisk2.pdf")
+
+    #l = @layout [a b;]
+    #p = plot(pc1, pc2, layout = l)
+
+    display(pc2)
+
+
+end

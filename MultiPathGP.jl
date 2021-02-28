@@ -280,8 +280,9 @@ Closed loop mission using BestFirst. Order of things:
 =#
 
 function mission(Er = 18000, rmethod = "WorstFirst", tt = 80, ti = 5, dt = 1)
+    Random.seed!(125)
     UASPos = [800, 450]
-    LPos = [1000, 600]
+    LPos = [600, 600]
     #LPos = [800, 450]
     ts = 0
     PNRStat = false
@@ -447,10 +448,10 @@ function GPCVaR(
 
     OptTimeSample = sol[7][ptgt]
 
-    RDVPos = UASPos .+ vs[:, 1] .* ts[1] .+ vs[:, 2] .* ts[2]
     μ = DriverPosition(ti, OptTimeSample, gp) + DriverPos #mean
     Σ = DriverUncertainty(ti, OptTimeSample, gp) #variance
-    gpStd = sqrt(Σ)
+    RDVPos = path(μ, ptgt, true)
+    gpStd = sqrt(Σ + 1.0)
     gp_distr = Normal(μ, gpStd)
     x = rand(gp_distr, n)
     UASPosv = hcat(UASPos[1] * ones(n), UASPos[2] * ones(n))
@@ -463,27 +464,24 @@ function GPCVaR(
     EDS = rowNorm(EuclideanDistancesUAS')
     EDL = rowNorm(EuclideanDistancesL')
 
+    t1 = (OptTimeSample - ti)
+    #nominal
     sEDS = norm(UASPos - RDVPos)
     sEDL = norm(LPos - RDVPos)
-    sVS = sEDS ./ ts[2]
-    sVL = sEDL ./ ts[3]
+    sVS = sEDS ./ t1
+    Em, tm, vm = minReturnEnergy(RDVPos, LPos)
 
     #compute new velocities
-    VS = EDS ./ ts[2]
-    VL = EDL ./ ts[3]
+    VS = EDS ./ t1
+    VL = EDL ./ tm
 
-    #compute old energy
-    sv = rowNorm(vs)
-    Γ1 =
-        sVS^2 * m[1] / 2 * ts[2] +
-        sVL^2 * m[2] / 2 * ts[3] +
-        m[1] * alpha * ts[2] +
-        m[2] * alpha * ts[3]
+    #compute nominal energy
+    Γ1 = sVS^2 * m[1] / 2 * t1 + m[1] * alpha * t1 + Em
 
     #compute new energies
     E =
-        VS .^ 2 .* m[1] ./ 2 .* ts[2] .+ VL .^ 2 .* m[2] ./ 2 .* ts[3] .+
-        m[1] * alpha * ts[2] .+ m[2] * alpha * ts[3]
+        VS .^ 2 .* m[1] ./ 2 .* t1 + .+VL .^ 2 .* m[2] ./ 2 .* tm .+
+        m[1] * alpha * t1 .+ m[2] * alpha * tm
     xd = Γ1 .- E
     # To find our elusive distribution, we will sample from gp and fit.
     ddistr = fit(Normal, xd)
@@ -494,6 +492,7 @@ function GPCVaR(
     gainmain = -CVaRα #extra distance we have to deal with on the main path
 
     #now redo everything for the second path, but subs t3 with new one
+    maintgt = ptgt
     ptgt = ptgt == 1 ? 2 : 1
 
     OptTimeSample = sol[7][ptgt]
@@ -501,7 +500,7 @@ function GPCVaR(
     μ = DriverPosition(ti, OptTimeSample, gp) + DriverPos #mean
     Σ = DriverUncertainty(ti, OptTimeSample, gp) #variance
     RDVPos = path(μ, ptgt, true)
-    gpStd = sqrt(Σ)
+    gpStd = sqrt(Σ + 1.0)
     gp_distr = Normal(μ, gpStd)
     x = rand(gp_distr, n)
     UASPosv = hcat(UASPos[1] * ones(n), UASPos[2] * ones(n))
@@ -541,7 +540,7 @@ function GPCVaR(
     CVaRα = CVaR(ddistr, x_α, c_α)
     gainalt = -CVaRα
 
-    return gainmain, gainalt
+    return gainmain, gainalt, maintgt
 
 end
 
