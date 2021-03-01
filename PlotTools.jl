@@ -64,7 +64,17 @@ function plotPlan!(UASPos, LPos, RDVPos, v, t)
     p = plot!(DPlan[1, :], DPlan[2, :])
 end
 
-function plotPlan!(UASPos, LPos, v, t, TimeSamples, np, ts, DriverPos, gp = nothing)
+function plotPlan!(
+    UASPos,
+    LPos,
+    v,
+    t,
+    TimeSamples,
+    np,
+    ts,
+    DriverPos,
+    gp = nothing,
+)
     np = size(TimeSamples, 2)
     for i = 1:np
         plotpath!(i)

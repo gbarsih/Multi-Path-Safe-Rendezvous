@@ -1,5 +1,7 @@
 include("MultiPathGP.jl")
 
+using Printf
+
 function TestLearning(n = 100, method = "full")
     t = range(0, stop = 100, length = n)
     D = zeros(n, 2)
@@ -448,6 +450,7 @@ function riskcon(Er = 18000, rmethod = "WorstFirst", tt = 80, ti = 5, dt = 1)
     Evd = zeros(l) #delivery
     Eva = zeros(l) #abort
     t1v = zeros(l) #t1
+    dv = zeros(l)
 
     PosSamples = zeros(N, length(p))
     OptTimeSample = zeros(length(p))
@@ -458,7 +461,7 @@ function riskcon(Er = 18000, rmethod = "WorstFirst", tt = 80, ti = 5, dt = 1)
     riskv1 = zeros(l)
     riskv2 = copy(riskv1)
     iend = 0
-    for i = 1:l
+    anim = @animate for i = 1:l
         iend = i
         #sample driver velocity
         DriverVelSample = DriverVelocity(tv[i]) + NoiseStd * randn(1)[1]
@@ -501,6 +504,33 @@ function riskcon(Er = 18000, rmethod = "WorstFirst", tt = 80, ti = 5, dt = 1)
         )
         sol = (v, t, LPos, UASPos, DriverPos, tv[i], OptTimeSample, ptgt)
         solr = sol
+        pp = plot()
+        pp = plot!(UASPosVec[1:i, 1], UASPosVec[1:i, 2], legend = false)
+        pp = drawMultiConvexHull(PosSamples, p)
+        pp = plotPlan!(
+            UASPos,
+            LPos,
+            v,
+            t,
+            TimeSamples,
+            length(p),
+            tv[i],
+            DriverPos,
+            gp,
+        )
+        pp = plotTimeSamples!(TimeSamples, p, tv[i], DriverPos, gp)
+        pp = scatter!(
+            path(DriverPos, ptgt),
+            markersize = 6.0,
+            label = "",
+            markercolor = :green,
+        )
+        s = @sprintf(
+            "Distance %.2f",
+            EuclideanDistance(UASPos, path(DriverPos, ptgt, true))
+        )
+        annotate!(200, 1000, text(s, 12, :left))
+        EuclideanDistance(UASPos, path(DriverPos, ptgt, true))
         PrevPNR = v[:, 1] .* t[1] .+ UASPos
         Ed =
             m[1] * v[1, 1]^2 * t[1] +
@@ -522,6 +552,7 @@ function riskcon(Er = 18000, rmethod = "WorstFirst", tt = 80, ti = 5, dt = 1)
             m[1] * v[2, 1]^2 * t[4] +
             m[1] * alpha * t[1] +
             m[1] * alpha * t[4]
+
 
 
         x, y, Er = uav_dynamics(
@@ -554,23 +585,24 @@ function riskcon(Er = 18000, rmethod = "WorstFirst", tt = 80, ti = 5, dt = 1)
         DriverPosVec[i] = DriverPos
         DriverPosEstimateVec[i] = DriverPosition(0.0, tv[i])
         DriverPosErrorVec[i] = DriverPosVec[i] - DriverPosEstimateVec[i]
+        dv[i] = EuclideanDistance(UASPos, path(DriverPos, ptgt, true))
         DriverPos = DriverPos + DriverVelocity(tv[i]) * dt
-        vsq = rowNorm(sol[1])
 
+        vsq = rowNorm(sol[1])
 
         risk1, risk2, maintgt = GPCVaR(gp, solr, ptgt, 10000, 0.05)
 
         riskv1[i] = max(risk1, 0.0)
         riskv2[i] = max(risk2, 0.0)
-        @show t[1], risk1, risk2, i, ptgt, maintgt
+        @show i, t[1], UASPos
     end
     #risk1 = GPCVaR(gp, solr, 1)
     #risk2 = GPCVaR(gp, solr, 2)
     #if (risk1 > 200 || risk2 > 200)
     #    println("Risk too high, aborting!")
     #end
-
-    return riskv1, riskv2, iend, Evr, Evd, Eva
+    gif(anim, "RDV_Anim_Risk.gif", fps = 15)
+    return riskv1, riskv2, iend, Evr, Evd, Eva, dv
 
 end
 
@@ -582,12 +614,13 @@ end
 
 function plotRiskTrajs(s, plt = true, Er = 16000)
     Random.seed!(s)
-    riskv1, riskv2, iend, Evr, Evd, Eva = riskcon(Er, "WorstFirst")
+    riskv1, riskv2, iend, Evr, Evd, Eva, dv = riskcon(Er, "WorstFirst")
     riskv1 = riskv1[1:iend-3]
     riskv2 = riskv2[1:iend-3]
     Evr = Evr[1:iend-3]
     Evd = Evd[1:iend-3]
     Eva = Eva[1:iend-3]
+    dv = dv[1:iend-3]
 
     plot(
         riskv1,
@@ -607,21 +640,36 @@ function plotRiskTrajs(s, plt = true, Er = 16000)
         Evr,
         label = L"E_{r}",
         xlabel = L"\textrm{Time }[s]",
-        ylabel = L"\textrm{Energy}",
+        ylabel = L"\textrm{Energy }[J]",
         formatter = :latex,
         title = L"\textrm{Energy Allotment}",
     )
     plot!(
         Eva,
         label = L"\textrm{Abort Energy}",
-        formatter = :latex, linestyle = :dash,
+        formatter = :latex,
+        linestyle = :dash,
     )
-    plot!(
+    p1 = plot!(
         Evd,
         label = L"\textrm{Rendezvous Energy}",
-        formatter = :latex, linestyle = :dash,
+        formatter = :latex,
+        linestyle = :dash,
+    )
+    savefig("energies.pdf")
+
+    p2 = plot(
+        dv,
+        label = L"\textrm{Distance}",
+        legend =:bottomleft,
+        formatter = :latex,
+        ylabel = L"\textrm{Distance }[m]",
+        xlabel = L"\textrm{Time }[s]",
+        title = L"\textrm{UAS-Driver Distance}",
     )
 
+    l = @layout [a b]
+    plot(p1,p2,layout=l,size=(600,400))
     savefig("energies.pdf")
 
 
