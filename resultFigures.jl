@@ -661,7 +661,6 @@ function plotRiskTrajs(s, plt = true, Er = 16000)
     p2 = plot(
         dv,
         label = L"\textrm{Distance}",
-        legend =:bottomleft,
         formatter = :latex,
         ylabel = L"\textrm{Distance }[m]",
         xlabel = L"\textrm{Time }[s]",
@@ -670,7 +669,7 @@ function plotRiskTrajs(s, plt = true, Er = 16000)
 
     l = @layout [a b]
     plot(p1,p2,layout=l,size=(600,400))
-    savefig("energies.pdf")
+    savefig("ener_dist.pdf")
 
 
     if plt
