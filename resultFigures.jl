@@ -606,6 +606,293 @@ function riskcon(Er = 18000, rmethod = "WorstFirst", tt = 80, ti = 5, dt = 1)
 
 end
 
+function risktails(Er = 18000, rmethod = "WorstFirst", tt = 80, ti = 5, dt = 1)
+    UASPos = [800, 450]
+    LPos = [1000, 600]
+    #LPos = [800, 450]
+    ts = 0
+    PNRStat = false
+    N = 100
+    p = [1, 2]
+    ptgt = 2
+    dt = 1
+    PrevPNR = [0.0, 0.0]
+    μ = 60 * ones(2)
+    Σ = 10 * ones(2)
+    Ns = 5
+    UASPosVec = zeros(N, 2)
+    #TimeSamples = ts:120
+    t = range(0.0, stop = ti, step = dt)
+    li = length(t)
+    D = zeros(li, 2)
+    D[:, 1] = VelocityPrior.(t)
+    D[:, 2] = Deviation.(VelocityPrior.(t)) + NoiseStd .* randn(li)
+    gp = LearnDeviationFunction(D, true, "DTC")
+    #now we move the driver, collect new data, update gp and sample on the gp
+    tv = range(0.0, stop = tt, step = dt)
+    l = length(tv)
+    D = [D; zeros(l, 2)]
+    DriverPos = 0.0
+    DriverPosVec = zeros(l)
+    DriverPosEstimateVec = zeros(l)
+    DriverPosErrorVec = zeros(l)
+
+    Evr = zeros(l) #remaining
+    Evd = zeros(l) #delivery
+    Eva = zeros(l) #abort
+    t1v = zeros(l) #t1
+    dv = zeros(l)
+
+    PosSamples = zeros(N, length(p))
+    OptTimeSample = zeros(length(p))
+    sol = nothing
+    solr = 0.0
+    riska = true
+
+    riskv1 = zeros(l)
+    riskv2 = copy(riskv1)
+    iend = 0
+    i = 1
+    iend = i
+    #sample driver velocity
+    DriverVelSample = DriverVelocity(tv[i]) + NoiseStd * randn(1)[1]
+    DriverDeviationSample = DriverVelSample - VelocityPrior(tv[i])
+    #add to dataset
+    D[li+i, 1] = VelocityPrior(tv[i])
+    D[li+i, 2] = DriverDeviationSample
+    #re-train gp
+    gp = LearnDeviationFunction(D[1:(li+i), :], true, "DTC")
+    #sample rendezvous candidates
+    UASPosVec[i, :] = UASPos
+    TimeSamples = SampleTime(μ, Σ, N)
+    elites, ptgt = rankMultiPath(
+        TimeSamples,
+        UASPos,
+        Ns,
+        p,
+        gp,
+        tv[i],
+        DriverPos,
+        rmethod,
+        Er,
+        sol,
+        riska,
+    )
+    CEM(μ, Σ, p, elites, OptTimeSample, TimeSamples, Ns)
+    PosSamples = DriverPosition(tv[i], TimeSamples, gp) .+ DriverPos
+    #MPC goes here
+    v, t = RendezvousPlanner(
+        UASPos,
+        LPos,
+        OptTimeSample,
+        Er,
+        tv[i],
+        PrevPNR,
+        false,
+        ptgt,
+        gp,
+        DriverPos,
+    )
+    sol = (v, t, LPos, UASPos, DriverPos, tv[i], OptTimeSample, ptgt)
+    solr = sol
+    EuclideanDistance(UASPos, path(DriverPos, ptgt, true))
+    PrevPNR = v[:, 1] .* t[1] .+ UASPos
+    Ed =
+        m[1] * v[1, 1]^2 * t[1] +
+        m[1] * v[1, 2]^2 * t[2] +
+        m[2] * v[1, 3]^2 * t[3] +
+        m[1] * v[2, 1]^2 * t[1] +
+        m[1] * v[2, 2]^2 * t[2] +
+        m[2] * v[2, 3]^2 * t[3] +
+        m[1] * alpha * t[1] +
+        m[1] * alpha * t[2] +
+        m[2] * alpha * t[3]
+
+    Evr[i] = Er
+    Evd[i] = Ed
+    Eva[i] =
+        m[1] * v[1, 1]^2 * t[1] +
+        m[1] * v[2, 1]^2 * t[1] +
+        m[1] * v[1, 4]^2 * t[4] +
+        m[1] * v[2, 1]^2 * t[4] +
+        m[1] * alpha * t[1] +
+        m[1] * alpha * t[4]
+
+    x, y, Er = uav_dynamics(
+        UASPos[1],
+        UASPos[2],
+        v[1, 1],
+        v[2, 1],
+        dt,
+        Er,
+        vmax,
+        PNRStat ? m[2] : m[1],
+    )
+    UASPos = [x, y]
+    if ptgt == 2
+        pv = pv2
+    else
+        pv = pv1
+    end
+    #@show t, i, Σ, μ, Er, Ed
+    DriverPosVec[i] = DriverPos
+    DriverPosEstimateVec[i] = DriverPosition(0.0, tv[i])
+    DriverPosErrorVec[i] = DriverPosVec[i] - DriverPosEstimateVec[i]
+    dv[i] = EuclideanDistance(UASPos, path(DriverPos, ptgt, true))
+    DriverPos = DriverPos + DriverVelocity(tv[i]) * dt
+
+    vsq = rowNorm(sol[1])
+
+    ptgt = 1
+    n = 10000
+    c_α = 0.01
+    vs = sol[1]
+    ts = sol[2]
+    LPos = sol[3]
+    UASPos = sol[4]
+    DriverPos = sol[5]
+    ti = sol[6]
+
+    OptTimeSample = sol[7][ptgt]
+
+    μ = DriverPosition(ti, OptTimeSample, gp) + DriverPos #mean
+    Σ = DriverUncertainty(ti, OptTimeSample, gp) #variance
+    RDVPos = path(μ, ptgt, true)
+    gpStd = sqrt(Σ + 1.0)
+    gp_distr = Normal(μ, gpStd)
+    x = rand(gp_distr, n)
+    UASPosv = hcat(UASPos[1] * ones(n), UASPos[2] * ones(n))
+    LPosv = hcat(LPos[1] * ones(n), LPos[2] * ones(n))
+    EuclideanPositions = pathSample2Array(path.(x, ptgt))
+    EuclideanDistancesUAS = EuclideanPositions .- UASPosv
+    EuclideanDistancesL = EuclideanPositions .- LPosv
+
+
+    EDS = rowNorm(EuclideanDistancesUAS')
+    EDL = rowNorm(EuclideanDistancesL')
+
+    t1 = (OptTimeSample - ti)
+    #nominal
+    sEDS = norm(UASPos - RDVPos)
+    sEDL = norm(LPos - RDVPos)
+    sVS = sEDS ./ t1
+    Em, tm, vm = minReturnEnergy(RDVPos, LPos)
+
+    #compute new velocities
+    VS = EDS ./ t1
+    VL = EDL ./ tm
+
+    #compute nominal energy
+    Γ1 = sVS^2 * m[1] / 2 * t1 + m[1] * alpha * t1 + Em
+
+    #compute new energies
+    E =
+        VS .^ 2 .* m[1] ./ 2 .* t1 + .+VL .^ 2 .* m[2] ./ 2 .* tm .+
+        m[1] * alpha * t1 .+ m[2] * alpha * tm
+    xd = Γ1 .- E
+    # To find our elusive distribution, we will sample from gp and fit.
+    flip = -1.0
+
+    shift = minimum(flip * xd)
+
+    xf = flip * xd .+ flip * (shift .- 1.0)
+
+    histogram(
+        xf,
+        normalized = true,
+        title = "Potential Energy Loss",
+        formatter = :latex,
+        ylabel = L"\mathbb{P}(E\geq E^\star)",
+        xlabel = L"\textrm{Energy}",
+        label = "Data",
+    )
+    rp = range(minimum(xf),stop=maximum(xf),length=100)
+    dGamma = pdf(fit(Gamma, xf), rp)
+    dNormal = pdf(fit(Normal, xf), rp)
+    dLogNormal = pdf(fit(LogNormal, xf), rp)
+    dInverseGaussian = pdf(fit(InverseGaussian, xf), rp)
+
+    plot!(rp, dGamma, label = "Gamma MLE Fit", lw = 3)
+    plot!(rp, dNormal, label = "Normal MLE Fit", lw = 3)
+    plot!(rp, dLogNormal, label = "Log Normal MLE Fit", lw = 3)
+    plot!(rp, dInverseGaussian, label = "Inverse Gaussian MLE Fit", lw = 3)
+
+    savefig("shifted_fit.pdf")
+
+    histogram(
+        xd,
+        normalized = true,
+        title = "Potential Energy Loss",
+        formatter = :latex,
+        ylabel = L"\mathbb{P}(E\geq E^\star)",
+        xlabel = L"\textrm{Energy}",
+        label = "Data",
+        legend = :topleft
+    )
+    rpf = flip * rp .+ flip * (shift .- 1.0)
+    plot!(rpf, dGamma, label = "Gamma MLE Fit", lw = 3)
+    plot!(rpf, dNormal, label = "Normal MLE Fit", lw = 3)
+    plot!(rpf, dLogNormal, label = "Log Normal MLE Fit", lw = 3)
+    plot!(rpf, dInverseGaussian, label = "Inverse Gaussian MLE Fit", lw = 3)
+
+    savefig("final_fit.pdf")
+
+    #now its easy to compute CVaR of a normal distribution
+    x_α = VaR(ddistr, c_α)
+    CVaRα = CVaR(ddistr, x_α, c_α)
+    gainmain = -CVaRα #extra distance we have to deal with on the main path
+
+    #now redo everything for the second path, but subs t3 with new one
+    maintgt = ptgt
+    ptgt = ptgt == 1 ? 2 : 1
+
+    OptTimeSample = sol[7][ptgt]
+
+    μ = DriverPosition(ti, OptTimeSample, gp) + DriverPos #mean
+    Σ = DriverUncertainty(ti, OptTimeSample, gp) #variance
+    RDVPos = path(μ, ptgt, true)
+    gpStd = sqrt(Σ + 1.0)
+    gp_distr = Normal(μ, gpStd)
+    x = rand(gp_distr, n)
+    UASPosv = hcat(UASPos[1] * ones(n), UASPos[2] * ones(n))
+    LPosv = hcat(LPos[1] * ones(n), LPos[2] * ones(n))
+    EuclideanPositions = pathSample2Array(path.(x, ptgt))
+    EuclideanDistancesUAS = EuclideanPositions .- UASPosv
+    EuclideanDistancesL = EuclideanPositions .- LPosv
+
+
+    EDS = rowNorm(EuclideanDistancesUAS')
+    EDL = rowNorm(EuclideanDistancesL')
+
+    t1 = (OptTimeSample - ti)
+    #nominal
+    sEDS = norm(UASPos - RDVPos)
+    sEDL = norm(LPos - RDVPos)
+    sVS = sEDS ./ t1
+    Em, tm, vm = minReturnEnergy(RDVPos, LPos)
+
+    #compute new velocities
+    VS = EDS ./ t1
+    VL = EDL ./ tm
+
+    #compute nominal energy
+    Γ1 = sVS^2 * m[1] / 2 * t1 + m[1] * alpha * t1 + Em
+
+    #compute new energies
+    E =
+        VS .^ 2 .* m[1] ./ 2 .* t1 + .+VL .^ 2 .* m[2] ./ 2 .* tm .+
+        m[1] * alpha * t1 .+ m[2] * alpha * tm
+    xd = Γ1 .- E
+    # To find our elusive distribution, we will sample from gp and fit.
+    ddistr = fit(Normal, xd)
+
+    #now its easy to compute CVaR of a normal distribution
+    x_α = VaR(ddistr, c_α)
+    CVaRα = CVaR(ddistr, x_α, c_α)
+    gainalt = -CVaRα
+
+end
+
 #TODO sunday morning:
 #two plots: first like ACC, side by side with risk stuff, add above
 #second, possibly: energy delta between predicted consumption and real
@@ -668,7 +955,7 @@ function plotRiskTrajs(s, plt = true, Er = 16000)
     )
 
     l = @layout [a b]
-    plot(p1,p2,layout=l,size=(600,400))
+    plot(p1, p2, layout = l, size = (600, 400))
     savefig("ener_dist.pdf")
 
 
