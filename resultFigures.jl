@@ -805,6 +805,7 @@ function risktails(Er = 18000, rmethod = "WorstFirst", tt = 80, ti = 5, dt = 1)
         ylabel = L"\mathbb{P}(E\geq E^\star)",
         xlabel = L"\textrm{Energy}",
         label = "Data",
+        legend = :topright
     )
     rp = range(minimum(xf),stop=maximum(xf),length=100)
     dGamma = pdf(fit(Gamma, xf), rp)
@@ -836,60 +837,6 @@ function risktails(Er = 18000, rmethod = "WorstFirst", tt = 80, ti = 5, dt = 1)
     plot!(rpf, dInverseGaussian, label = "Inverse Gaussian MLE Fit", lw = 3)
 
     savefig("final_fit.pdf")
-
-    #now its easy to compute CVaR of a normal distribution
-    x_α = VaR(ddistr, c_α)
-    CVaRα = CVaR(ddistr, x_α, c_α)
-    gainmain = -CVaRα #extra distance we have to deal with on the main path
-
-    #now redo everything for the second path, but subs t3 with new one
-    maintgt = ptgt
-    ptgt = ptgt == 1 ? 2 : 1
-
-    OptTimeSample = sol[7][ptgt]
-
-    μ = DriverPosition(ti, OptTimeSample, gp) + DriverPos #mean
-    Σ = DriverUncertainty(ti, OptTimeSample, gp) #variance
-    RDVPos = path(μ, ptgt, true)
-    gpStd = sqrt(Σ + 1.0)
-    gp_distr = Normal(μ, gpStd)
-    x = rand(gp_distr, n)
-    UASPosv = hcat(UASPos[1] * ones(n), UASPos[2] * ones(n))
-    LPosv = hcat(LPos[1] * ones(n), LPos[2] * ones(n))
-    EuclideanPositions = pathSample2Array(path.(x, ptgt))
-    EuclideanDistancesUAS = EuclideanPositions .- UASPosv
-    EuclideanDistancesL = EuclideanPositions .- LPosv
-
-
-    EDS = rowNorm(EuclideanDistancesUAS')
-    EDL = rowNorm(EuclideanDistancesL')
-
-    t1 = (OptTimeSample - ti)
-    #nominal
-    sEDS = norm(UASPos - RDVPos)
-    sEDL = norm(LPos - RDVPos)
-    sVS = sEDS ./ t1
-    Em, tm, vm = minReturnEnergy(RDVPos, LPos)
-
-    #compute new velocities
-    VS = EDS ./ t1
-    VL = EDL ./ tm
-
-    #compute nominal energy
-    Γ1 = sVS^2 * m[1] / 2 * t1 + m[1] * alpha * t1 + Em
-
-    #compute new energies
-    E =
-        VS .^ 2 .* m[1] ./ 2 .* t1 + .+VL .^ 2 .* m[2] ./ 2 .* tm .+
-        m[1] * alpha * t1 .+ m[2] * alpha * tm
-    xd = Γ1 .- E
-    # To find our elusive distribution, we will sample from gp and fit.
-    ddistr = fit(Normal, xd)
-
-    #now its easy to compute CVaR of a normal distribution
-    x_α = VaR(ddistr, c_α)
-    CVaRα = CVaR(ddistr, x_α, c_α)
-    gainalt = -CVaRα
 
 end
 
